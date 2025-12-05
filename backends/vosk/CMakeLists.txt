@@ -9,31 +9,91 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Поиск зависимостей
 # ============================================================================
 
-# Vosk библиотека
-find_library(VOSK_LIB
-    NAMES vosk
-    PATHS
+# Vosk библиотека (обязательна)
+# Сначала пробуем через pkg-config, если доступно
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(VOSK_PKG QUIET vosk-api)
+endif()
+
+if(VOSK_PKG_FOUND)
+    # Используем pkg-config результаты
+    set(VOSK_LIB ${VOSK_PKG_LIBRARIES})
+    set(VOSK_INCLUDE ${VOSK_PKG_INCLUDE_DIRS})
+    message(STATUS "Vosk found via pkg-config (required for wake word detection):")
+    message(STATUS "  Library: ${VOSK_LIB}")
+    message(STATUS "  Include: ${VOSK_INCLUDE}")
+else()
+    # Fallback: поиск вручную в расширенном списке путей
+    # Проверяем переменные окружения для нестандартных путей
+    if(DEFINED ENV{VOSK_LIB_PATH})
+        list(APPEND VOSK_LIB_SEARCH_PATHS $ENV{VOSK_LIB_PATH})
+    endif()
+    if(DEFINED ENV{VOSK_INCLUDE_PATH})
+        list(APPEND VOSK_INCLUDE_SEARCH_PATHS $ENV{VOSK_INCLUDE_PATH})
+    endif()
+    
+    # Стандартные пути
+    list(APPEND VOSK_LIB_SEARCH_PATHS
         /usr/lib
         /usr/local/lib
         /usr/lib/x86_64-linux-gnu
-)
-
-find_path(VOSK_INCLUDE
-    NAMES vosk/vosk.h
-    PATHS
+        /usr/lib64
+        /opt/vosk/lib
+        ${CMAKE_INSTALL_PREFIX}/lib
+    )
+    
+    list(APPEND VOSK_INCLUDE_SEARCH_PATHS
         /usr/include
         /usr/local/include
-)
+        /opt/vosk/include
+        ${CMAKE_INSTALL_PREFIX}/include
+    )
+    
+    find_library(VOSK_LIB
+        NAMES vosk
+        PATHS ${VOSK_LIB_SEARCH_PATHS}
+        NO_DEFAULT_PATH
+    )
+    
+    # Если не найдено в указанных путях, пробуем системный поиск
+    if(NOT VOSK_LIB)
+        find_library(VOSK_LIB NAMES vosk)
+    endif()
 
-if(NOT VOSK_LIB OR NOT VOSK_INCLUDE)
-    message(WARNING "Vosk library not found. Vosk backend will be disabled.")
-    message(WARNING "  Install: yay -S vosk-api-bin (Arch Linux)")
-    message(WARNING "  Or build from: https://github.com/alphacephei/vosk-api")
-    message(WARNING "  Wake word detection will not work without Vosk!")
-    set(VOSK_FOUND FALSE)
-    return()
-else()
-    set(VOSK_FOUND TRUE)
+    find_path(VOSK_INCLUDE
+        NAMES vosk/vosk.h
+        PATHS ${VOSK_INCLUDE_SEARCH_PATHS}
+        NO_DEFAULT_PATH
+    )
+    
+    # Если не найдено в указанных путях, пробуем системный поиск
+    if(NOT VOSK_INCLUDE)
+        find_path(VOSK_INCLUDE NAMES vosk/vosk.h)
+    endif()
+    
+    # Проверяем результат и выдаём понятную ошибку если не найдено
+    if(NOT VOSK_LIB OR NOT VOSK_INCLUDE)
+        message(FATAL_ERROR "\n"
+            "Vosk library is REQUIRED but not found!\n"
+            "\n"
+            "Vosk is required for wake word detection.\n"
+            "\n"
+            "Installation options:\n"
+            "  Arch Linux:     yay -S vosk-api-bin\n"
+            "  Ubuntu/Debian:  sudo apt install libvosk-dev (if available)\n"
+            "  From source:    https://github.com/alphacephei/vosk-api\n"
+            "\n"
+            "If Vosk is installed in a non-standard location, set:\n"
+            "  VOSK_LIB_PATH=/path/to/lib\n"
+            "  VOSK_INCLUDE_PATH=/path/to/include\n"
+            "\n"
+            "Searched paths:\n"
+            "  Libraries: /usr/lib, /usr/local/lib, /usr/lib/x86_64-linux-gnu, /usr/lib64, /opt/vosk/lib\n"
+            "  Headers:   /usr/include, /usr/local/include, /opt/vosk/include\n"
+        )
+    endif()
+    
     message(STATUS "Vosk found (required for wake word detection):")
     message(STATUS "  Library: ${VOSK_LIB}")
     message(STATUS "  Include: ${VOSK_INCLUDE}")
