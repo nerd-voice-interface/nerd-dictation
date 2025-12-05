@@ -19,8 +19,8 @@ namespace {
 std::string send_command_to_daemon(const std::string& action) {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     std::string socket_path = runtime_dir ? 
-        std::string(runtime_dir) + "/nerd-dictation-ex.sock" :
-        "/tmp/nerd-dictation-ex.sock";
+        std::string(runtime_dir) + "/nerd-dictation.sock" :
+        "/tmp/nerd-dictation.sock";
     
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -54,8 +54,8 @@ std::string send_command_to_daemon(const std::string& action) {
 bool is_daemon_running() {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     std::string socket_path = runtime_dir ? 
-        std::string(runtime_dir) + "/nerd-dictation-ex.sock" :
-        "/tmp/nerd-dictation-ex.sock";
+        std::string(runtime_dir) + "/nerd-dictation.sock" :
+        "/tmp/nerd-dictation.sock";
     
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) return false;
@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
     spdlog::set_default_logger(logger);
     spdlog::set_level(spdlog::level::info);
     
-    CLI::App app{"nerd-dictation-ex — диктовка с подключаемыми бэкендами ASR"};
+    CLI::App app{"nerd-dictation — диктовка с подключаемыми бэкендами ASR"};
     
     // Подкоманды
     auto daemon_cmd = app.add_subcommand("daemon", "Запустить daemon");
@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
             std::string response = send_command_to_daemon("begin");
             std::cout << response << std::endl;
         } else {
-            spdlog::error("Daemon не запущен. Запустите: nerd-dictation-ex daemon");
+            spdlog::error("Daemon не запущен. Запустите: nerd-dictation daemon");
             return 1;
         }
         return 0;
@@ -148,7 +148,7 @@ int main(int argc, char* argv[]) {
             std::string response = send_command_to_daemon(action);
             std::cout << response << std::endl;
         } else {
-            spdlog::error("Daemon не запущен. Запустите: nerd-dictation-ex daemon");
+            spdlog::error("Daemon не запущен. Запустите: nerd-dictation daemon");
             return 1;
         }
         return 0;

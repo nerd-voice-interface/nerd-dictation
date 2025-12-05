@@ -1,12 +1,12 @@
 [Unit]
-Description=nerd-dictation-ex daemon
+Description=nerd-dictation daemon
 Documentation=https://github.com/marcusmae/nerd-dictation-ex
 After=pipewire.service pipewire-pulse.service sound.target
 Wants=pipewire.service pipewire-pulse.service
 
 [Service]
 Type=simple
-ExecStart=@ABS_INSTALL_PREFIX@/bin/nerd-dictation-ex daemon
+ExecStart=@ABS_INSTALL_PREFIX@/bin/nerd-dictation daemon
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -20,7 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.config/nerd-dictation-ex %h/.local/share/vosk %h/.local/share/nerd-dictation-ex
+ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation
 
 # Ограничения ресурсов
 MemoryMax=2G

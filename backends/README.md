@@ -1,4 +1,4 @@
-# Бэкенды nerd-dictation-ex
+# Бэкенды nerd-dictation
 
 Каждый бэкенд — независимый CMake-проект со своими зависимостями.
 
@@ -31,12 +31,12 @@ backends/
 ```cmake
 # Vosk бэкенд (ОБЯЗАТЕЛЕН для wake word detection)
 add_subdirectory(backends/vosk)
-target_link_libraries(nerd-dictation-ex PRIVATE nerd-dictation-vosk)
+target_link_libraries(nerd-dictation PRIVATE nerd-dictation-vosk)
 
 # GigaAM бэкенд (опциональный)
 if(ENABLE_GIGAAM_BACKEND)
     add_subdirectory(backends/gigaam)
-    target_link_libraries(nerd-dictation-ex PRIVATE nerd-dictation-gigaam)
+    target_link_libraries(nerd-dictation PRIVATE nerd-dictation-gigaam)
 endif()
 ```
 

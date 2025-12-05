@@ -58,7 +58,7 @@ make install
 ```
 
 Файлы будут установлены в `~/forge/nerd-dictation/install/`:
-- `install/bin/nerd-dictation-ex` - исполняемый файл
+- `install/bin/nerd-dictation` - исполняемый файл
 - `install/lib/libnerd-dictation-vosk.so` - Vosk бэкенд
 - `install/lib/libnerd-dictation-gigaam.so` - GigaAM бэкенд (если включён)
 - `install/include/` - заголовочные файлы
@@ -67,14 +67,14 @@ make install
 
 ```bash
 # Из build директории
-./nerd-dictation-ex --help
+./nerd-dictation --help
 
 # Или из install директории
-~/forge/nerd-dictation/install/bin/nerd-dictation-ex --help
+~/forge/nerd-dictation/install/bin/nerd-dictation --help
 
 # Или добавьте в PATH
 export PATH="$HOME/forge/nerd-dictation/install/bin:$PATH"
-nerd-dictation-ex --help
+nerd-dictation --help
 ```
 
 ## Опции сборки
@@ -139,7 +139,7 @@ sudo apt install libeigen3-dev  # Ubuntu/Debian
 
 ```
 === Configuration Summary ===
-Project: nerd-dictation-ex 1.0.0
+Project: nerd-dictation 1.0.0
 Build type: Release
 C++ standard: 20
 

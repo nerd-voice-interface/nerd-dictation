@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(nerd-dictation-ex 
+project(nerd-dictation 
     VERSION 1.0.0 
     DESCRIPTION "Расширенная диктовка для Linux с подключаемыми бэкендами ASR"
     LANGUAGES CXX
@@ -274,7 +274,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
 
 # Установка конфигурационных файлов (если есть)
-# install(FILES config/default.toml DESTINATION share/nerd-dictation-ex)
+# install(FILES config/default.toml DESTINATION share/nerd-dictation)
 
 # Установка заголовков (для разработки)
 install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
@@ -291,8 +291,8 @@ install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
 get_filename_component(ABS_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
 set(ABS_INSTALL_PREFIX "${ABS_INSTALL_PREFIX}")  # Убеждаемся что переменная установлена
 configure_file(
-    ${CMAKE_SOURCE_DIR}/systemd/nerd-dictation-ex.service.in
-    ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+    ${CMAKE_SOURCE_DIR}/systemd/nerd-dictation.service.in
+    ${CMAKE_BINARY_DIR}/nerd-dictation.service
     @ONLY
     NEWLINE_STYLE UNIX
 )
@@ -301,13 +301,13 @@ configure_file(
 if(NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr" AND 
    NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
     # Локальная установка - в lib/systemd/user
-    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation.service
         DESTINATION lib/systemd/user
     )
     message(STATUS "Systemd service будет установлен в: ${CMAKE_INSTALL_PREFIX}/lib/systemd/user/")
 else()
     # Системная установка - в /usr/lib/systemd/user
-    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation.service
         DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/user
     )
 endif()

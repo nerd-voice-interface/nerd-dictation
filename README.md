@@ -1,4 +1,4 @@
-# nerd-dictation-ex (C++)
+# nerd-dictation (C++)
 
 C++ реализация системы диктовки речи для Linux с модульной архитектурой и подключаемыми бэкендами распознавания речи.
 
@@ -51,7 +51,7 @@ make -j$(nproc)
 ### Запуск
 
 ```bash
-./nerd-dictation-ex --help
+./nerd-dictation --help
 ```
 
 ## Структура проекта

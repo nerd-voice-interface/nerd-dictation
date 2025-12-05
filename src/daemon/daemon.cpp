@@ -52,9 +52,9 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
     // Определяем путь к socket
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     if (runtime_dir) {
-        socket_path_ = std::string(runtime_dir) + "/nerd-dictation-ex.sock";
+        socket_path_ = std::string(runtime_dir) + "/nerd-dictation.sock";
     } else {
-        socket_path_ = "/tmp/nerd-dictation-ex.sock";
+        socket_path_ = "/tmp/nerd-dictation.sock";
     }
     
     // Создаём бэкенд в зависимости от конфигурации

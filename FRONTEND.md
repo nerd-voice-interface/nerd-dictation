@@ -1,4 +1,4 @@
-# Фронтенд nerd-dictation-ex
+# Фронтенд nerd-dictation
 
 ## Обзор
 
@@ -7,14 +7,14 @@
 ## Компоненты
 
 ### 1. CLI интерфейс
-- `nerd-dictation-ex daemon` - запуск daemon
-- `nerd-dictation-ex begin` - начать диктовку
-- `nerd-dictation-ex end` - завершить диктовку
-- `nerd-dictation-ex cancel` - отменить диктовку
-- `nerd-dictation-ex toggle` - переключить диктовку (begin/end)
+- `nerd-dictation daemon` - запуск daemon
+- `nerd-dictation begin` - начать диктовку
+- `nerd-dictation end` - завершить диктовку
+- `nerd-dictation cancel` - отменить диктовку
+- `nerd-dictation toggle` - переключить диктовку (begin/end)
 
 ### 2. Daemon
-- Unix socket сервер для IPC (`$XDG_RUNTIME_DIR/nerd-dictation-ex.sock`)
+- Unix socket сервер для IPC (`$XDG_RUNTIME_DIR/nerd-dictation.sock`)
 - Держит модель в памяти
 - Обрабатывает команды от CLI клиента
 
@@ -24,7 +24,7 @@
 - Подходит для тестирования фронтенда без реальных моделей
 
 ### 4. Конфигурация
-- Загрузка из TOML файла (`~/.config/nerd-dictation-ex/config.toml`)
+- Загрузка из TOML файла (`~/.config/nerd-dictation/config.toml`)
 - Поддержка секций: `[general]`, `[audio]`, `[dummy]`
 
 ### 5. Симуляция ввода
@@ -45,7 +45,7 @@
 ### 1. Запуск daemon
 
 ```bash
-nerd-dictation-ex daemon
+nerd-dictation daemon
 ```
 
 Daemon запустится и будет слушать команды через Unix socket.
@@ -56,18 +56,18 @@ Daemon запустится и будет слушать команды чере
 
 ```bash
 # Начать диктовку
-nerd-dictation-ex begin
+nerd-dictation begin
 
 # Завершить диктовку
-nerd-dictation-ex end
+nerd-dictation end
 
 # Переключить (begin/end)
-nerd-dictation-ex toggle
+nerd-dictation toggle
 ```
 
 ### 3. Конфигурация
 
-Создайте `~/.config/nerd-dictation-ex/config.toml`:
+Создайте `~/.config/nerd-dictation/config.toml`:
 
 ```toml
 [general]

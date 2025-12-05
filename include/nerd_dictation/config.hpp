@@ -28,7 +28,7 @@ Config load_config(const std::filesystem::path& config_path);
 
 /**
  * Найти конфигурационный файл
- * Проверяет: ~/.config/nerd-dictation-ex/config.toml, затем default.toml
+ * Проверяет: ~/.config/nerd-dictation/config.toml, затем default.toml
  */
 std::optional<std::filesystem::path> find_config_file();
 

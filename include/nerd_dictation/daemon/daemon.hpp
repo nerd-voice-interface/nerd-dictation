@@ -18,7 +18,7 @@ enum class DaemonState {
 };
 
 /**
- * Daemon для nerd-dictation-ex
+ * Daemon для nerd-dictation
  * Держит модель в памяти и обрабатывает команды через Unix socket
  */
 class DictationDaemon {

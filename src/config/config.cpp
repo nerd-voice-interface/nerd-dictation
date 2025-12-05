@@ -7,16 +7,16 @@
 namespace nerd_dictation {
 
 std::optional<std::filesystem::path> find_config_file() {
-    // Проверяем ~/.config/nerd-dictation-ex/config.toml
+    // Проверяем ~/.config/nerd-dictation/config.toml
     const char* home = std::getenv("HOME");
     if (home) {
-        std::filesystem::path user_config = std::filesystem::path(home) / ".config" / "nerd-dictation-ex" / "config.toml";
+        std::filesystem::path user_config = std::filesystem::path(home) / ".config" / "nerd-dictation" / "config.toml";
         if (std::filesystem::exists(user_config)) {
             return user_config;
         }
         
         // Проверяем default.toml в той же директории
-        std::filesystem::path default_config = std::filesystem::path(home) / ".config" / "nerd-dictation-ex" / "default.toml";
+        std::filesystem::path default_config = std::filesystem::path(home) / ".config" / "nerd-dictation" / "default.toml";
         if (std::filesystem::exists(default_config)) {
             return default_config;
         }
