@@ -289,6 +289,7 @@ install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
 # Конфигурируем systemd service файл с подстановкой install prefix
 # Используем абсолютный путь для CMAKE_INSTALL_PREFIX
 get_filename_component(ABS_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
+set(ABS_INSTALL_PREFIX "${ABS_INSTALL_PREFIX}")  # Убеждаемся что переменная установлена
 configure_file(
     ${CMAKE_SOURCE_DIR}/systemd/nerd-dictation-ex.service.in
     ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
