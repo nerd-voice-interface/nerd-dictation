@@ -82,6 +82,28 @@ Config load_config(const std::filesystem::path& config_path) {
             }
         }
         
+        // [wake_word] - настройки wake word detection
+        if (data.contains("wake_word")) {
+            const auto& wake_word = toml::find(data, "wake_word");
+            if (wake_word.contains("enabled")) {
+                config.wake_word.enabled = toml::find<bool>(wake_word, "enabled");
+            }
+            if (wake_word.contains("word")) {
+                config.wake_word.word = toml::find<std::string>(wake_word, "word");
+            }
+            if (wake_word.contains("model_path")) {
+                std::string path = toml::find<std::string>(wake_word, "model_path");
+                // Разворачиваем ~
+                if (!path.empty() && path.front() == '~') {
+                    const char* home = std::getenv("HOME");
+                    if (home) {
+                        path = std::string(home) + path.substr(1);
+                    }
+                }
+                config.wake_word.model_path = path;
+            }
+        }
+        
         spdlog::info("Конфигурация загружена из: {}", config_path.string());
         
     } catch (const std::exception& e) {

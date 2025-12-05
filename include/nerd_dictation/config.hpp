@@ -12,6 +12,12 @@ struct AudioConfig {
     size_t chunk_size = 8000;
 };
 
+struct WakeWordConfig {
+    bool enabled = true;
+    std::string word = "запись";  // Wake word по умолчанию
+    std::string model_path = "~/.local/share/vosk/vosk-model-small-ru";
+};
+
 struct Config {
     std::string backend = "dummy";
     std::string input_method = "xdotool";  // По умолчанию xdotool, как в оригинале
@@ -19,6 +25,9 @@ struct Config {
     
     // Путь к модели (для реальных бэкендов)
     std::string model_path;
+    
+    // Wake word detection
+    WakeWordConfig wake_word;
 };
 
 /**

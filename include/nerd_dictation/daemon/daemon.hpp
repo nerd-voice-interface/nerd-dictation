@@ -32,19 +32,30 @@ private:
     // Потоки
     std::thread dictation_thread_;
     std::thread socket_thread_;
+    std::thread wake_word_thread_;
+    std::thread audio_listener_thread_;
     
     // Синхронизация
     std::mutex dictation_mutex_;
     std::condition_variable dictation_cv_;
+    std::mutex audio_buffer_mutex_;
     
-    // Unix socket
-    std::string socket_path_;
-    int server_fd_ = -1;
+    // Аудио буфер для wake word detection
+    std::vector<std::vector<int16_t>> audio_buffer_;
+    static constexpr size_t AUDIO_BUFFER_SECONDS = 1.5;
+    
+    // Wake word detection (требует Vosk)
+    bool wake_word_enabled_ = true;
+    std::string wake_word_ = "запись";
+    std::atomic<bool> wake_word_running_{false};
     
     void dictation_loop();
     void socket_server_loop();
     void handle_client(int client_fd);
     void process_and_type(const std::string& text);
+    void audio_listener_loop();
+    void wake_word_loop();
+    bool load_wake_word_models();
     
 public:
     explicit DictationDaemon(const Config& config);

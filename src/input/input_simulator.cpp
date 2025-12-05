@@ -4,6 +4,8 @@
 #include <sstream>
 #include <iostream>
 #include <iomanip>
+#include <algorithm>
+#include <cctype>
 
 namespace nerd_dictation::input {
 
