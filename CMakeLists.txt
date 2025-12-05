@@ -1,0 +1,384 @@
+cmake_minimum_required(VERSION 3.20)
+project(nerd-dictation-ex 
+    VERSION 1.0.0 
+    DESCRIPTION "Расширенная диктовка для Linux с подключаемыми бэкендами ASR"
+    LANGUAGES CXX
+)
+
+# ============================================================================
+# Настройки компилятора
+# ============================================================================
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Предупреждения
+if(MSVC)
+    add_compile_options(/W4)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Оптимизация для Release
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+# ============================================================================
+# Опции сборки
+# ============================================================================
+
+option(ENABLE_VOSK_BACKEND "Enable Vosk backend" ON)
+option(ENABLE_GIGAAM_BACKEND "Enable GigaAM backend" OFF)
+option(ENABLE_TESTS "Build tests" OFF)
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+
+# ============================================================================
+# Пути для ThirdParty submodules
+# ============================================================================
+
+set(THIRDPARTY_DIR "${CMAKE_SOURCE_DIR}/ThirdParty")
+
+# ============================================================================
+# Поиск системных зависимостей через pkg-config
+# ============================================================================
+
+find_package(PkgConfig REQUIRED)
+
+# PipeWire
+pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
+if(PIPEWIRE_FOUND)
+    message(STATUS "PipeWire found: ${PIPEWIRE_VERSION}")
+    message(STATUS "  Include dirs: ${PIPEWIRE_INCLUDE_DIRS}")
+    message(STATUS "  Libraries: ${PIPEWIRE_LIBRARIES}")
+else()
+    message(FATAL_ERROR "PipeWire not found. Install: sudo pacman -S libpipewire")
+endif()
+
+# PulseAudio (fallback)
+pkg_check_modules(PULSE libpulse)
+if(PULSE_FOUND)
+    message(STATUS "PulseAudio found: ${PULSE_VERSION}")
+    add_definitions(-DHAVE_PULSEAUDIO)
+else()
+    message(WARNING "PulseAudio not found, only PipeWire will be available")
+endif()
+
+# ============================================================================
+# Vosk библиотека
+# ============================================================================
+
+if(ENABLE_VOSK_BACKEND)
+    find_library(VOSK_LIB
+        NAMES vosk
+        PATHS
+            /usr/lib
+            /usr/local/lib
+            /usr/lib/x86_64-linux-gnu
+    )
+    
+    find_path(VOSK_INCLUDE
+        NAMES vosk/vosk.h
+        PATHS
+            /usr/include
+            /usr/local/include
+    )
+    
+    if(VOSK_LIB AND VOSK_INCLUDE)
+        message(STATUS "Vosk found")
+        message(STATUS "  Library: ${VOSK_LIB}")
+        message(STATUS "  Include: ${VOSK_INCLUDE}")
+        set(VOSK_FOUND TRUE)
+    else()
+        message(WARNING "Vosk not found. Vosk backend will be disabled.")
+        message(WARNING "  Install: yay -S vosk-api-bin (Arch Linux)")
+        message(WARNING "  Or build from: https://github.com/alphacephei/vosk-api")
+        set(VOSK_FOUND FALSE)
+        set(ENABLE_VOSK_BACKEND OFF)
+    endif()
+endif()
+
+# ============================================================================
+# ONNX Runtime (для GigaAM бэкенда)
+# ============================================================================
+
+if(ENABLE_GIGAAM_BACKEND)
+    # Попробуем найти через переменную окружения
+    if(DEFINED ENV{ONNXRUNTIME_ROOT})
+        set(ONNXRUNTIME_ROOT $ENV{ONNXRUNTIME_ROOT})
+        message(STATUS "ONNX Runtime root from environment: ${ONNXRUNTIME_ROOT}")
+    endif()
+    
+    # Поиск заголовков
+    find_path(ONNXRUNTIME_INCLUDE
+        NAMES onnxruntime_cxx_api.h
+        PATHS
+            ${ONNXRUNTIME_ROOT}/include
+            /usr/include
+            /usr/local/include
+    )
+    
+    # Поиск библиотеки
+    find_library(ONNXRUNTIME_LIB
+        NAMES onnxruntime
+        PATHS
+            ${ONNXRUNTIME_ROOT}/lib
+            /usr/lib
+            /usr/local/lib
+            /usr/lib/x86_64-linux-gnu
+    )
+    
+    if(ONNXRUNTIME_INCLUDE AND ONNXRUNTIME_LIB)
+        message(STATUS "ONNX Runtime found")
+        message(STATUS "  Include: ${ONNXRUNTIME_INCLUDE}")
+        message(STATUS "  Library: ${ONNXRUNTIME_LIB}")
+        set(ONNXRUNTIME_FOUND TRUE)
+    else()
+        message(WARNING "ONNX Runtime not found. GigaAM backend will be disabled.")
+        message(WARNING "  Download from: https://github.com/microsoft/onnxruntime/releases")
+        message(WARNING "  Or install: yay -S onnxruntime (Arch Linux)")
+        set(ONNXRUNTIME_FOUND FALSE)
+        set(ENABLE_GIGAAM_BACKEND OFF)
+    endif()
+endif()
+
+# ============================================================================
+# Git Submodules из ThirdParty
+# ============================================================================
+
+# TOML11 (header-only)
+if(EXISTS "${THIRDPARTY_DIR}/toml11")
+    message(STATUS "Using TOML11 from ThirdParty submodule")
+    add_subdirectory(${THIRDPARTY_DIR}/toml11)
+    set(TOML11_FOUND TRUE)
+else()
+    # Попробуем найти системную версию
+    find_path(TOML11_INCLUDE
+        NAMES toml11/toml.hpp
+        PATHS
+            /usr/include
+            /usr/local/include
+    )
+    if(TOML11_INCLUDE)
+        message(STATUS "Using system TOML11: ${TOML11_INCLUDE}")
+        set(TOML11_FOUND TRUE)
+    else()
+        message(FATAL_ERROR "TOML11 not found. Initialize submodule:")
+        message(FATAL_ERROR "  git submodule add https://github.com/ToruNiina/toml11.git ThirdParty/toml11")
+        message(FATAL_ERROR "  git submodule update --init --recursive")
+    endif()
+endif()
+
+# spdlog
+if(EXISTS "${THIRDPARTY_DIR}/spdlog")
+    message(STATUS "Using spdlog from ThirdParty submodule")
+    add_subdirectory(${THIRDPARTY_DIR}/spdlog)
+    set(SPDLOG_FOUND TRUE)
+else()
+    # Попробуем найти через find_package
+    find_package(spdlog CONFIG QUIET)
+    if(spdlog_FOUND)
+        message(STATUS "Using system spdlog")
+        set(SPDLOG_FOUND TRUE)
+    else()
+        message(WARNING "spdlog not found. Initialize submodule:")
+        message(WARNING "  git submodule add https://github.com/gabime/spdlog.git ThirdParty/spdlog")
+        message(WARNING "  git submodule update --init --recursive")
+        message(FATAL_ERROR "spdlog is required")
+    endif()
+endif()
+
+# CLI11 (header-only)
+if(EXISTS "${THIRDPARTY_DIR}/CLI11")
+    message(STATUS "Using CLI11 from ThirdParty submodule")
+    add_subdirectory(${THIRDPARTY_DIR}/CLI11)
+    set(CLI11_FOUND TRUE)
+else()
+    # Попробуем найти системную версию
+    find_path(CLI11_INCLUDE
+        NAMES CLI11/CLI.hpp
+        PATHS
+            /usr/include
+            /usr/local/include
+    )
+    if(CLI11_INCLUDE)
+        message(STATUS "Using system CLI11: ${CLI11_INCLUDE}")
+        set(CLI11_FOUND TRUE)
+    else()
+        message(WARNING "CLI11 not found. Initialize submodule:")
+        message(WARNING "  git submodule add https://github.com/CLIUtils/CLI11.git ThirdParty/CLI11")
+        message(WARNING "  git submodule update --init --recursive")
+        message(FATAL_ERROR "CLI11 is required")
+    endif()
+endif()
+
+# Eigen (опционально, для шумоподавления)
+if(EXISTS "${THIRDPARTY_DIR}/eigen")
+    message(STATUS "Using Eigen from ThirdParty submodule")
+    add_subdirectory(${THIRDPARTY_DIR}/eigen)
+    set(EIGEN_FOUND TRUE)
+else()
+    find_package(Eigen3 QUIET)
+    if(Eigen3_FOUND)
+        message(STATUS "Using system Eigen3")
+        set(EIGEN_FOUND TRUE)
+    else()
+        message(WARNING "Eigen not found. Initialize submodule for advanced noise reduction:")
+        message(WARNING "  git submodule add https://gitlab.com/libeigen/eigen.git ThirdParty/eigen")
+        message(WARNING "  Basic noise reduction will work without Eigen")
+        set(EIGEN_FOUND FALSE)
+    endif()
+endif()
+
+# ============================================================================
+# Структура проекта
+# ============================================================================
+
+set(INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
+set(SOURCE_DIR "${CMAKE_SOURCE_DIR}/src")
+
+# Создаём директории если их нет
+file(MAKE_DIRECTORY ${INCLUDE_DIR})
+file(MAKE_DIRECTORY ${SOURCE_DIR})
+
+# ============================================================================
+# Исходные файлы
+# ============================================================================
+
+# Пока создаём заглушки для структуры
+set(SOURCES
+    ${SOURCE_DIR}/main.cpp
+)
+
+set(HEADERS
+    ${INCLUDE_DIR}/nerd_dictation/config.hpp
+)
+
+# ============================================================================
+# Исполняемый файл
+# ============================================================================
+
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+
+# ============================================================================
+# Include директории
+# ============================================================================
+
+target_include_directories(${PROJECT_NAME}
+    PRIVATE
+    ${INCLUDE_DIR}
+    ${SOURCE_DIR}
+    ${PIPEWIRE_INCLUDE_DIRS}
+    ${PULSE_INCLUDE_DIRS}
+)
+
+# TOML11
+if(TOML11_FOUND)
+    if(TARGET toml11)
+        target_link_libraries(${PROJECT_NAME} PRIVATE toml11)
+    else()
+        target_include_directories(${PROJECT_NAME} PRIVATE ${TOML11_INCLUDE})
+    endif()
+endif()
+
+# CLI11
+if(CLI11_FOUND)
+    if(TARGET CLI11::CLI11)
+        target_link_libraries(${PROJECT_NAME} PRIVATE CLI11::CLI11)
+    else()
+        target_include_directories(${PROJECT_NAME} PRIVATE ${CLI11_INCLUDE})
+    endif()
+endif()
+
+# ============================================================================
+# Линковка библиотек
+# ============================================================================
+
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE
+    ${PIPEWIRE_LIBRARIES}
+)
+
+target_compile_options(${PROJECT_NAME}
+    PRIVATE
+    ${PIPEWIRE_CFLAGS_OTHER}
+)
+
+# PulseAudio (если найден)
+if(PULSE_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PULSE_LIBRARIES})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${PULSE_INCLUDE_DIRS})
+endif()
+
+# spdlog
+if(SPDLOG_FOUND)
+    if(TARGET spdlog::spdlog)
+        target_link_libraries(${PROJECT_NAME} PRIVATE spdlog::spdlog)
+    endif()
+endif()
+
+# Vosk (если включен)
+if(ENABLE_VOSK_BACKEND AND VOSK_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${VOSK_LIB})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${VOSK_INCLUDE})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_VOSK_BACKEND)
+    message(STATUS "Vosk backend: ENABLED")
+else()
+    message(STATUS "Vosk backend: DISABLED")
+endif()
+
+# ONNX Runtime (если включен)
+if(ENABLE_GIGAAM_BACKEND AND ONNXRUNTIME_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_LIB})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_INCLUDE})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_GIGAAM_BACKEND)
+    message(STATUS "GigaAM backend: ENABLED")
+else()
+    message(STATUS "GigaAM backend: DISABLED")
+endif()
+
+# Eigen (если найден)
+if(EIGEN_FOUND)
+    if(TARGET Eigen3::Eigen)
+        target_link_libraries(${PROJECT_NAME} PRIVATE Eigen3::Eigen)
+    endif()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
+endif()
+
+# ============================================================================
+# Установка
+# ============================================================================
+
+install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+
+# ============================================================================
+# Тесты (если включены)
+# ============================================================================
+
+if(ENABLE_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
+# ============================================================================
+# Итоговая информация
+# ============================================================================
+
+message(STATUS "")
+message(STATUS "=== Configuration Summary ===")
+message(STATUS "Project: ${PROJECT_NAME} ${PROJECT_VERSION}")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "")
+message(STATUS "Backends:")
+message(STATUS "  Vosk: ${ENABLE_VOSK_BACKEND}")
+message(STATUS "  GigaAM: ${ENABLE_GIGAAM_BACKEND}")
+message(STATUS "")
+message(STATUS "Dependencies:")
+message(STATUS "  PipeWire: ${PIPEWIRE_VERSION}")
+message(STATUS "  PulseAudio: ${PULSE_FOUND}")
+message(STATUS "  TOML11: ${TOML11_FOUND}")
+message(STATUS "  spdlog: ${SPDLOG_FOUND}")
+message(STATUS "  CLI11: ${CLI11_FOUND}")
+message(STATUS "  Eigen: ${EIGEN_FOUND}")
+message(STATUS "============================")
+message(STATUS "")
