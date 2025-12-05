@@ -27,8 +27,6 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 # Опции сборки
 # ============================================================================
 
-option(ENABLE_VOSK_BACKEND "Enable Vosk backend" ON)
-option(ENABLE_GIGAAM_BACKEND "Enable GigaAM backend" OFF)
 option(ENABLE_TESTS "Build tests" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
@@ -61,84 +59,6 @@ if(PULSE_FOUND)
     add_definitions(-DHAVE_PULSEAUDIO)
 else()
     message(WARNING "PulseAudio not found, only PipeWire will be available")
-endif()
-
-# ============================================================================
-# Vosk библиотека
-# ============================================================================
-
-if(ENABLE_VOSK_BACKEND)
-    find_library(VOSK_LIB
-        NAMES vosk
-        PATHS
-            /usr/lib
-            /usr/local/lib
-            /usr/lib/x86_64-linux-gnu
-    )
-    
-    find_path(VOSK_INCLUDE
-        NAMES vosk/vosk.h
-        PATHS
-            /usr/include
-            /usr/local/include
-    )
-    
-    if(VOSK_LIB AND VOSK_INCLUDE)
-        message(STATUS "Vosk found")
-        message(STATUS "  Library: ${VOSK_LIB}")
-        message(STATUS "  Include: ${VOSK_INCLUDE}")
-        set(VOSK_FOUND TRUE)
-    else()
-        message(WARNING "Vosk not found. Vosk backend will be disabled.")
-        message(WARNING "  Install: yay -S vosk-api-bin (Arch Linux)")
-        message(WARNING "  Or build from: https://github.com/alphacephei/vosk-api")
-        set(VOSK_FOUND FALSE)
-        set(ENABLE_VOSK_BACKEND OFF)
-    endif()
-endif()
-
-# ============================================================================
-# ONNX Runtime (для GigaAM бэкенда)
-# ============================================================================
-
-if(ENABLE_GIGAAM_BACKEND)
-    # Попробуем найти через переменную окружения
-    if(DEFINED ENV{ONNXRUNTIME_ROOT})
-        set(ONNXRUNTIME_ROOT $ENV{ONNXRUNTIME_ROOT})
-        message(STATUS "ONNX Runtime root from environment: ${ONNXRUNTIME_ROOT}")
-    endif()
-    
-    # Поиск заголовков
-    find_path(ONNXRUNTIME_INCLUDE
-        NAMES onnxruntime_cxx_api.h
-        PATHS
-            ${ONNXRUNTIME_ROOT}/include
-            /usr/include
-            /usr/local/include
-    )
-    
-    # Поиск библиотеки
-    find_library(ONNXRUNTIME_LIB
-        NAMES onnxruntime
-        PATHS
-            ${ONNXRUNTIME_ROOT}/lib
-            /usr/lib
-            /usr/local/lib
-            /usr/lib/x86_64-linux-gnu
-    )
-    
-    if(ONNXRUNTIME_INCLUDE AND ONNXRUNTIME_LIB)
-        message(STATUS "ONNX Runtime found")
-        message(STATUS "  Include: ${ONNXRUNTIME_INCLUDE}")
-        message(STATUS "  Library: ${ONNXRUNTIME_LIB}")
-        set(ONNXRUNTIME_FOUND TRUE)
-    else()
-        message(WARNING "ONNX Runtime not found. GigaAM backend will be disabled.")
-        message(WARNING "  Download from: https://github.com/microsoft/onnxruntime/releases")
-        message(WARNING "  Or install: yay -S onnxruntime (Arch Linux)")
-        set(ONNXRUNTIME_FOUND FALSE)
-        set(ENABLE_GIGAAM_BACKEND OFF)
-    endif()
 endif()
 
 # ============================================================================
@@ -316,26 +236,6 @@ if(SPDLOG_FOUND)
     endif()
 endif()
 
-# Vosk (если включен)
-if(ENABLE_VOSK_BACKEND AND VOSK_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${VOSK_LIB})
-    target_include_directories(${PROJECT_NAME} PRIVATE ${VOSK_INCLUDE})
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_VOSK_BACKEND)
-    message(STATUS "Vosk backend: ENABLED")
-else()
-    message(STATUS "Vosk backend: DISABLED")
-endif()
-
-# ONNX Runtime (если включен)
-if(ENABLE_GIGAAM_BACKEND AND ONNXRUNTIME_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_LIB})
-    target_include_directories(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_INCLUDE})
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_GIGAAM_BACKEND)
-    message(STATUS "GigaAM backend: ENABLED")
-else()
-    message(STATUS "GigaAM backend: DISABLED")
-endif()
-
 # Eigen (если найден)
 if(EIGEN_FOUND)
     if(TARGET Eigen3::Eigen)
@@ -369,16 +269,15 @@ message(STATUS "Project: ${PROJECT_NAME} ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "")
-message(STATUS "Backends:")
-message(STATUS "  Vosk: ${ENABLE_VOSK_BACKEND}")
-message(STATUS "  GigaAM: ${ENABLE_GIGAAM_BACKEND}")
-message(STATUS "")
-message(STATUS "Dependencies:")
+message(STATUS "Core Dependencies:")
 message(STATUS "  PipeWire: ${PIPEWIRE_VERSION}")
 message(STATUS "  PulseAudio: ${PULSE_FOUND}")
 message(STATUS "  TOML11: ${TOML11_FOUND}")
 message(STATUS "  spdlog: ${SPDLOG_FOUND}")
 message(STATUS "  CLI11: ${CLI11_FOUND}")
 message(STATUS "  Eigen: ${EIGEN_FOUND}")
+message(STATUS "")
+message(STATUS "Note: Backend dependencies (Vosk, ONNX Runtime) are handled")
+message(STATUS "      by their respective backend CMake files.")
 message(STATUS "============================")
 message(STATUS "")
