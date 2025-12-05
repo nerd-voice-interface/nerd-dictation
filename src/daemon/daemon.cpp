@@ -564,10 +564,13 @@ void DictationDaemon::wake_word_loop() {
                         std::vector<char> audio_bytes(speech_buffer.size() * sizeof(int16_t));
                         std::memcpy(audio_bytes.data(), speech_buffer.data(), audio_bytes.size());
                         
-                        if (vosk_recognizer_accept_waveform(wake_word_recognizer_, 
-                                                             audio_bytes.data(), 
-                                                             audio_bytes.size())) {
-                            const char* result_str = vosk_recognizer_result(wake_word_recognizer_);
+                        // Отправляем аудио в Vosk recognizer
+                        vosk_recognizer_accept_waveform(wake_word_recognizer_, 
+                                                        audio_bytes.data(), 
+                                                        audio_bytes.size());
+                        
+                        // Проверяем результат
+                        const char* result_str = vosk_recognizer_result(wake_word_recognizer_);
                             if (result_str) {
                                 std::string result(result_str);
                                 
