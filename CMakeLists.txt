@@ -283,6 +283,22 @@ install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
 )
 
 # ============================================================================
+# Systemd service
+# ============================================================================
+
+# Конфигурируем systemd service файл с подстановкой install prefix
+configure_file(
+    ${CMAKE_SOURCE_DIR}/systemd/nerd-dictation-ex.service.in
+    ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+    @ONLY
+)
+
+# Установка systemd service файла
+install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+    DESTINATION lib/systemd/user
+)
+
+# ============================================================================
 # Бэкенды
 # ============================================================================
 

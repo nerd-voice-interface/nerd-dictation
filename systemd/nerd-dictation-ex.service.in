@@ -1,0 +1,30 @@
+[Unit]
+Description=nerd-dictation-ex daemon
+Documentation=https://github.com/marcusmae/nerd-dictation-ex
+After=pipewire.service pipewire-pulse.service sound.target
+Wants=pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=@CMAKE_INSTALL_PREFIX@/bin/nerd-dictation-ex daemon
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Окружение
+Environment="XDG_RUNTIME_DIR=%t"
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/nerd-dictation-ex %h/.local/share/vosk %h/.local/share/nerd-dictation-ex
+
+# Ограничения ресурсов
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+WantedBy=default.target

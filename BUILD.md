@@ -40,14 +40,41 @@ git submodule update --init --recursive
 
 ```bash
 mkdir build && cd build
-cmake ..
+cmake .. -DCMAKE_INSTALL_PREFIX=~/forge/nerd-dictation/install
 make -j$(nproc)
 ```
 
-### 4. Запуск
+Или используйте скрипт для автоматической сборки и установки:
 
 ```bash
+./scripts/build-and-install.sh
+```
+
+### 4. Установка (локальная)
+
+```bash
+cd build
+make install
+```
+
+Файлы будут установлены в `~/forge/nerd-dictation/install/`:
+- `install/bin/nerd-dictation-ex` - исполняемый файл
+- `install/lib/libnerd-dictation-vosk.so` - Vosk бэкенд
+- `install/lib/libnerd-dictation-gigaam.so` - GigaAM бэкенд (если включён)
+- `install/include/` - заголовочные файлы
+
+### 5. Запуск
+
+```bash
+# Из build директории
 ./nerd-dictation-ex --help
+
+# Или из install директории
+~/forge/nerd-dictation/install/bin/nerd-dictation-ex --help
+
+# Или добавьте в PATH
+export PATH="$HOME/forge/nerd-dictation/install/bin:$PATH"
+nerd-dictation-ex --help
 ```
 
 ## Опции сборки
