@@ -260,7 +260,17 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
 # Установка
 # ============================================================================
 
+# Установка исполняемого файла
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+
+# Установка конфигурационных файлов (если есть)
+# install(FILES config/default.toml DESTINATION share/nerd-dictation-ex)
+
+# Установка заголовков (для разработки)
+install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
+    DESTINATION include
+    FILES_MATCHING PATTERN "*.hpp"
+)
 
 # ============================================================================
 # Бэкенды
