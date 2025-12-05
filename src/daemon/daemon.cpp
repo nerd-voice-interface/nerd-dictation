@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <cstring>
 #include <sstream>
 #include <fstream>
@@ -19,6 +20,8 @@
 #include <thread>
 #include <chrono>
 #include <vector>
+#include <algorithm>
+#include <cctype>
 
 // Простой JSON парсер (заглушка)
 namespace {
@@ -56,6 +59,15 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
     } else {
         socket_path_ = "/tmp/nerd-dictation.sock";
     }
+    
+    // Инициализируем wake word настройки
+    wake_word_enabled_ = config_.wake_word.enabled;
+    wake_word_ = config_.wake_word.word;
+    
+    // Вычисляем размер аудио буфера
+    size_t bytes_per_second = config_.audio.sample_rate * 2; // 16-bit = 2 bytes
+    size_t buffer_bytes = bytes_per_second * AUDIO_BUFFER_SECONDS;
+    audio_buffer_max_chunks_ = std::max<size_t>(1, buffer_bytes / config_.audio.chunk_size);
     
     // Создаём бэкенд в зависимости от конфигурации
     std::string backend_name = config_.backend;
@@ -320,12 +332,293 @@ void DictationDaemon::socket_server_loop() {
 }
 
 void DictationDaemon::run() {
+    // Запускаем постоянный аудио-слушатель
+    start_audio_listener();
+    
+    // Запускаем wake word detection если включено
+    if (wake_word_enabled_) {
+        start_wake_word_detection();
+    }
+    
+    // Запускаем socket server
     socket_thread_ = std::thread(&DictationDaemon::socket_server_loop, this);
     socket_thread_.join();
 }
 
 std::string DictationDaemon::get_backend_name() const {
     return backend_ ? backend_->name() : "none";
+}
+
+bool DictationDaemon::load_wake_word_models() {
+    if (!wake_word_enabled_) {
+        return false;
+    }
+    
+    #ifdef ENABLE_VOSK_BACKEND
+    std::string model_path = config_.wake_word.model_path;
+    
+    // Разворачиваем ~
+    if (!model_path.empty() && model_path.front() == '~') {
+        const char* home = std::getenv("HOME");
+        if (home) {
+            model_path = std::string(home) + model_path.substr(1);
+        }
+    }
+    
+    spdlog::info("Загрузка Vosk модели для wake word: {}", model_path);
+    
+    wake_word_model_ = vosk_model_new(model_path.c_str());
+    if (!wake_word_model_) {
+        spdlog::error("Не удалось загрузить Vosk модель для wake word: {}", model_path);
+        return false;
+    }
+    
+    wake_word_recognizer_ = vosk_recognizer_new(wake_word_model_, config_.audio.sample_rate);
+    if (!wake_word_recognizer_) {
+        vosk_model_free(wake_word_model_);
+        wake_word_model_ = nullptr;
+        spdlog::error("Не удалось создать Vosk recognizer для wake word");
+        return false;
+    }
+    
+    spdlog::info("Vosk модель для wake word загружена");
+    return true;
+    #else
+    spdlog::warn("Vosk backend не доступен, wake word detection отключён");
+    return false;
+    #endif
+}
+
+void DictationDaemon::start_audio_listener() {
+    if (audio_listener_thread_.joinable()) {
+        return;
+    }
+    
+    audio_listener_thread_ = std::thread(&DictationDaemon::audio_listener_loop, this);
+    spdlog::info("Аудио-слушатель запущен");
+}
+
+void DictationDaemon::start_wake_word_detection() {
+    if (!wake_word_enabled_) {
+        return;
+    }
+    
+    if (wake_word_thread_.joinable()) {
+        return;
+    }
+    
+    if (!load_wake_word_models()) {
+        spdlog::warn("Wake word detection отключён из-за ошибок загрузки");
+        return;
+    }
+    
+    wake_word_running_ = true;
+    wake_word_thread_ = std::thread(&DictationDaemon::wake_word_loop, this);
+    spdlog::info("Wake word detection запущен (слово: '{}')", wake_word_);
+}
+
+std::string DictationDaemon::get_audio_command() const {
+    std::string source = config_.audio.source;
+    int sample_rate = config_.audio.sample_rate;
+    
+    if (source == "pw-cat") {
+        return "pw-cat --record --format s16 --rate " + std::to_string(sample_rate) + " --channels 1 -";
+    } else if (source == "parec") {
+        return "parec --format=s16ne --rate=" + std::to_string(sample_rate) + " --channels=1 --raw";
+    } else if (source == "sox") {
+        return "sox -q -d -t raw -b 16 -e signed-integer -r " + std::to_string(sample_rate) + " -c 1 -";
+    }
+    
+    return "pw-cat --record --format s16 --rate " + std::to_string(sample_rate) + " --channels 1 -";
+}
+
+void DictationDaemon::audio_listener_loop() {
+    size_t chunk_size = config_.audio.chunk_size;
+    
+    while (running_) {
+        try {
+            std::string cmd = get_audio_command();
+            audio_proc_pipe_ = popen(cmd.c_str(), "r");
+            
+            if (!audio_proc_pipe_) {
+                spdlog::error("Не удалось запустить аудио процесс: {}", cmd);
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                continue;
+            }
+            
+            std::vector<int16_t> chunk(chunk_size / sizeof(int16_t));
+            
+            while (running_) {
+                size_t bytes_read = fread(chunk.data(), 1, chunk_size, audio_proc_pipe_);
+                
+                if (bytes_read == 0) {
+                    break; // EOF или процесс завершился
+                }
+                
+                if (bytes_read < chunk_size) {
+                    chunk.resize(bytes_read / sizeof(int16_t));
+                }
+                
+                // Добавляем в кольцевой буфер для диктовки (с ограничением размера)
+                {
+                    std::lock_guard<std::mutex> lock(audio_buffer_mutex_);
+                    audio_buffer_.push_back(chunk);
+                    if (audio_buffer_.size() > audio_buffer_max_chunks_) {
+                        audio_buffer_.pop_front();
+                    }
+                }
+                
+                // Дублируем в очередь для wake word (если не активна диктовка)
+                if (wake_word_running_ && state_ != DaemonState::Listening) {
+                    std::lock_guard<std::mutex> lock(wake_word_queue_mutex_);
+                    wake_word_queue_.push(chunk);
+                }
+            }
+            
+            pclose(audio_proc_pipe_);
+            audio_proc_pipe_ = nullptr;
+            
+        } catch (const std::exception& e) {
+            spdlog::error("Ошибка аудио-слушателя: {}", e.what());
+        }
+        
+        if (running_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }
+}
+
+void DictationDaemon::wake_word_loop() {
+    #ifdef ENABLE_VOSK_BACKEND
+    if (!wake_word_recognizer_) {
+        return;
+    }
+    
+    std::vector<int16_t> vad_buffer;
+    std::vector<int16_t> speech_buffer;
+    bool is_speech_active = false;
+    
+    // VAD требует чанки по 512 сэмплов при 16kHz
+    constexpr size_t vad_chunk_samples = 512;
+    
+    while (wake_word_running_ && running_) {
+        // Пропускаем, если диктовка уже активна
+        if (state_ == DaemonState::Listening) {
+            // Сбросить состояние и очистить очередь
+            vad_buffer.clear();
+            speech_buffer.clear();
+            is_speech_active = false;
+            
+            {
+                std::lock_guard<std::mutex> lock(wake_word_queue_mutex_);
+                while (!wake_word_queue_.empty()) {
+                    wake_word_queue_.pop();
+                }
+            }
+            
+            vosk_recognizer_reset(wake_word_recognizer_);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        
+        // Получить аудио из очереди
+        std::vector<int16_t> chunk;
+        {
+            std::lock_guard<std::mutex> lock(wake_word_queue_mutex_);
+            if (wake_word_queue_.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            chunk = wake_word_queue_.front();
+            wake_word_queue_.pop();
+        }
+        
+        // Добавляем в VAD буфер
+        vad_buffer.insert(vad_buffer.end(), chunk.begin(), chunk.end());
+        
+        // Обрабатываем VAD чанками по 512 сэмплов
+        while (vad_buffer.size() >= vad_chunk_samples) {
+            std::vector<int16_t> vad_chunk(vad_buffer.begin(), vad_buffer.begin() + vad_chunk_samples);
+            vad_buffer.erase(vad_buffer.begin(), vad_buffer.begin() + vad_chunk_samples);
+            
+            // Упрощённая VAD: считаем что речь активна если есть данные
+            // В оригинале используется Silero VAD, но для простоты используем упрощённую логику
+            if (!vad_chunk.empty()) {
+                // Проверяем уровень сигнала (простая эвристика)
+                int32_t sum = 0;
+                for (int16_t sample : vad_chunk) {
+                    sum += std::abs(sample);
+                }
+                int32_t avg = sum / vad_chunk.size();
+                
+                if (avg > 1000) { // Порог для детекции речи
+                    if (!is_speech_active) {
+                        is_speech_active = true;
+                        speech_buffer = vad_chunk;
+                    } else {
+                        speech_buffer.insert(speech_buffer.end(), vad_chunk.begin(), vad_chunk.end());
+                    }
+                } else {
+                    if (is_speech_active && !speech_buffer.empty()) {
+                        // Конец речи - распознаём накопленный буфер
+                        std::vector<char> audio_bytes(speech_buffer.size() * sizeof(int16_t));
+                        std::memcpy(audio_bytes.data(), speech_buffer.data(), audio_bytes.size());
+                        
+                        if (vosk_recognizer_accept_waveform(wake_word_recognizer_, 
+                                                             audio_bytes.data(), 
+                                                             audio_bytes.size())) {
+                            const char* result_str = vosk_recognizer_result(wake_word_recognizer_);
+                            if (result_str) {
+                                std::string result(result_str);
+                                
+                                // Простой парсинг JSON для извлечения текста
+                                size_t text_pos = result.find("\"text\"");
+                                if (text_pos != std::string::npos) {
+                                    size_t start = result.find('"', text_pos + 7);
+                                    if (start != std::string::npos) {
+                                        size_t end = result.find('"', start + 1);
+                                        if (end != std::string::npos) {
+                                            std::string text = result.substr(start + 1, end - start - 1);
+                                            
+                                            // Приводим к нижнему регистру
+                                            std::transform(text.begin(), text.end(), text.begin(), ::tolower);
+                                            
+                                            spdlog::info("[wake word] распознано: '{}'", text);
+                                            
+                                            // Проверяем на wake word (включая падежные формы)
+                                            std::string wake_lower = wake_word_;
+                                            std::transform(wake_lower.begin(), wake_lower.end(), wake_lower.begin(), ::tolower);
+                                            
+                                            if (text.find(wake_lower) != std::string::npos || 
+                                                text.find("записи") != std::string::npos) {
+                                                spdlog::info("[wake word] активация по слову '{}'!", wake_word_);
+                                                
+                                                vosk_recognizer_reset(wake_word_recognizer_);
+                                                
+                                                // Очистить аудио-буфер чтобы wake word не попал в диктовку
+                                                {
+                                                    std::lock_guard<std::mutex> lock(audio_buffer_mutex_);
+                                                    audio_buffer_.clear();
+                                                }
+                                                
+                                                // Автоматически запустить диктовку
+                                                begin_dictation();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        speech_buffer.clear();
+                        is_speech_active = false;
+                        vosk_recognizer_reset(wake_word_recognizer_);
+                    }
+                }
+            }
+        }
+    }
+    #endif
 }
 
 } // namespace nerd_dictation::daemon
