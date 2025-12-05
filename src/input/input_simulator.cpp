@@ -13,6 +13,28 @@ InputSimulator::InputSimulator(const std::string& method) : method_(method) {
         spdlog::warn("Неизвестный метод ввода: {}, используется stdout", method);
         method_ = "stdout";
     }
+    
+    // Проверяем доступность инструмента (кроме stdout)
+    if (method_ != "stdout") {
+        std::string check_cmd;
+        if (method_ == "ydotool") {
+            check_cmd = "which ydotool > /dev/null 2>&1";
+        } else if (method_ == "xdotool") {
+            check_cmd = "which xdotool > /dev/null 2>&1";
+        } else if (method_ == "wtype") {
+            check_cmd = "which wtype > /dev/null 2>&1";
+        } else if (method_ == "dotool") {
+            check_cmd = "which dotool > /dev/null 2>&1";
+        }
+        
+        if (!check_cmd.empty()) {
+            int result = std::system(check_cmd.c_str());
+            if (result != 0) {
+                spdlog::warn("Инструмент {} не найден, используется stdout", method_);
+                method_ = "stdout";
+            }
+        }
+    }
 }
 
 void InputSimulator::type_text(const std::string& text) {
