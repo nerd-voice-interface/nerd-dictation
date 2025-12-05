@@ -1,10 +1,8 @@
 #pragma once
 
-/**
- * Конфигурация nerd-dictation-ex
- * 
- * TODO: Реализовать загрузку из TOML файла
- */
+#include <string>
+#include <filesystem>
+#include <optional>
 
 namespace nerd_dictation {
 
@@ -15,14 +13,23 @@ struct AudioConfig {
 };
 
 struct Config {
-    std::string backend = "vosk";
+    std::string backend = "dummy";
     std::string input_method = "ydotool";
     AudioConfig audio;
     
-    // TODO: Добавить остальные секции конфигурации
+    // Путь к модели (для реальных бэкендов)
+    std::string model_path;
 };
 
-// TODO: Реализовать функцию загрузки
-// Config load_config(const std::filesystem::path& path);
+/**
+ * Загрузить конфигурацию из TOML файла
+ */
+Config load_config(const std::filesystem::path& config_path);
+
+/**
+ * Найти конфигурационный файл
+ * Проверяет: ~/.config/nerd-dictation-ex/config.toml, затем default.toml
+ */
+std::optional<std::filesystem::path> find_config_file();
 
 } // namespace nerd_dictation

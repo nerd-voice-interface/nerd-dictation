@@ -38,9 +38,9 @@ else
     echo "CLI11 уже существует, пропускаем..."
 fi
 
-# Eigen - линейная алгебра (опционально)
+# Eigen - линейная алгебра (обязательно, для шумоподавления)
 if [ ! -d "$THIRDPARTY_DIR/eigen" ]; then
-    echo "Добавляем Eigen (опционально)..."
+    echo "Добавляем Eigen (обязательно для шумоподавления)..."
     git submodule add https://gitlab.com/libeigen/eigen.git "$THIRDPARTY_DIR/eigen"
 else
     echo "Eigen уже существует, пропускаем..."

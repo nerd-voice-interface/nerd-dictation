@@ -164,13 +164,25 @@ file(MAKE_DIRECTORY ${SOURCE_DIR})
 # Исходные файлы
 # ============================================================================
 
-# Пока создаём заглушки для структуры
 set(SOURCES
     ${SOURCE_DIR}/main.cpp
+    ${SOURCE_DIR}/config/config.cpp
+    ${SOURCE_DIR}/backends/dummy_backend.cpp
+    ${SOURCE_DIR}/input/input_simulator.cpp
+    ${SOURCE_DIR}/input/postprocess.cpp
+    ${SOURCE_DIR}/sounds/sounds.cpp
+    ${SOURCE_DIR}/daemon/daemon.cpp
 )
 
 set(HEADERS
+    ${INCLUDE_DIR}/nerd_dictation/types.hpp
     ${INCLUDE_DIR}/nerd_dictation/config.hpp
+    ${INCLUDE_DIR}/nerd_dictation/backends/base.hpp
+    ${INCLUDE_DIR}/nerd_dictation/backends/dummy_backend.hpp
+    ${INCLUDE_DIR}/nerd_dictation/input/input_simulator.hpp
+    ${INCLUDE_DIR}/nerd_dictation/input/postprocess.hpp
+    ${INCLUDE_DIR}/nerd_dictation/sounds/sounds.hpp
+    ${INCLUDE_DIR}/nerd_dictation/daemon/daemon.hpp
 )
 
 # ============================================================================
