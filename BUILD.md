@@ -54,8 +54,6 @@ make -j$(nproc)
 
 ```bash
 cmake -DCMAKE_BUILD_TYPE=Release \
-      -DENABLE_VOSK_BACKEND=ON \
-      -DENABLE_GIGAAM_BACKEND=OFF \
       -DENABLE_TESTS=OFF \
       ..
 ```
@@ -63,9 +61,9 @@ cmake -DCMAKE_BUILD_TYPE=Release \
 ### Опции:
 
 - `CMAKE_BUILD_TYPE`: `Debug`, `Release`, `RelWithDebInfo`
-- `ENABLE_VOSK_BACKEND`: Включить Vosk бэкенд (по умолчанию ON)
-- `ENABLE_GIGAAM_BACKEND`: Включить GigaAM бэкенд (по умолчанию OFF)
 - `ENABLE_TESTS`: Собрать тесты (по умолчанию OFF)
+
+**Примечание:** Опции бэкендов (Vosk, GigaAM) обрабатываются в отдельных CMake файлах для каждого бэкенда.
 
 ## Структура зависимостей
 
@@ -98,14 +96,15 @@ sudo apt install libpipewire-0.3-dev  # Ubuntu/Debian
 git submodule update --init --recursive
 ```
 
-### Ошибка: "Vosk not found"
-Vosk бэкенд опционален. Если не нужен, отключите:
+### Ошибка: "Eigen not found"
 ```bash
-cmake -DENABLE_VOSK_BACKEND=OFF ..
-```
+# Установить системный пакет
+sudo pacman -S eigen  # Arch Linux
+sudo apt install libeigen3-dev  # Ubuntu/Debian
 
-### Ошибка: "ONNX Runtime not found"
-GigaAM бэкенд опционален. По умолчанию отключён.
+# Или инициализировать submodule
+./scripts/init-submodules.sh
+```
 
 ## Проверка конфигурации
 
