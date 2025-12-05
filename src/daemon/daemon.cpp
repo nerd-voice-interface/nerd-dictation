@@ -1,6 +1,9 @@
 #include "nerd_dictation/daemon/daemon.hpp"
 #include "nerd_dictation/types.hpp"
 #include "nerd_dictation/backends/dummy_backend.hpp"
+#ifdef ENABLE_VOSK_BACKEND
+#include "nerd_dictation_vosk/backend.hpp"
+#endif
 #include "nerd_dictation/input/input_simulator.hpp"
 #include "nerd_dictation/input/postprocess.hpp"
 #include "nerd_dictation/sounds/sounds.hpp"
@@ -54,9 +57,33 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
         socket_path_ = "/tmp/nerd-dictation-ex.sock";
     }
     
-    // Создаём dummy бэкенд
-    backend_ = backends::create_dummy_backend();
-    backend_->load_model(config_.model_path.empty() ? "dummy" : config_.model_path);
+    // Создаём бэкенд в зависимости от конфигурации
+    std::string backend_name = config_.backend;
+    
+    if (backend_name == "vosk") {
+        #ifdef ENABLE_VOSK_BACKEND
+        backend_ = backends::create_vosk_backend();
+        std::string model_path = config_.model_path.empty() 
+            ? "~/.local/share/vosk/vosk-model-ru" 
+            : config_.model_path;
+        // Разворачиваем ~
+        if (model_path.front() == '~') {
+            const char* home = std::getenv("HOME");
+            if (home) {
+                model_path = std::string(home) + model_path.substr(1);
+            }
+        }
+        backend_->load_model(model_path);
+        #else
+        spdlog::error("Vosk backend not available, falling back to dummy");
+        backend_ = backends::create_dummy_backend();
+        backend_->load_model("dummy");
+        #endif
+    } else {
+        // Dummy бэкенд по умолчанию
+        backend_ = backends::create_dummy_backend();
+        backend_->load_model(config_.model_path.empty() ? "dummy" : config_.model_path);
+    }
     
     spdlog::info("Daemon инициализирован, socket: {}", socket_path_);
 }
