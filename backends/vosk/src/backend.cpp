@@ -3,9 +3,9 @@
 #include "nerd_dictation/backends/base.hpp"
 #include <spdlog/spdlog.h>
 #include <vosk/vosk.h>
-#include <json/json.h>
 #include <fstream>
 #include <sstream>
+#include <string>
 
 namespace nerd_dictation::backends {
 

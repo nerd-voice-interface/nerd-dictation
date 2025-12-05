@@ -38,8 +38,9 @@ else()
     message(STATUS "  Include: ${VOSK_INCLUDE}")
 endif()
 
-# Заголовки основного проекта
-set(MAIN_PROJECT_INCLUDE "${CMAKE_SOURCE_DIR}/../../include")
+# Заголовки основного проекта (относительно backends/vosk/)
+get_filename_component(MAIN_PROJECT_ROOT "${CMAKE_SOURCE_DIR}/../.." ABSOLUTE)
+set(MAIN_PROJECT_INCLUDE "${MAIN_PROJECT_ROOT}/include")
 
 # ============================================================================
 # Исходные файлы
