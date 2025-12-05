@@ -13,6 +13,9 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <thread>
+#include <chrono>
+#include <vector>
 
 // Простой JSON парсер (заглушка)
 namespace {
@@ -100,11 +103,30 @@ void DictationDaemon::dictation_loop() {
     
     std::unique_lock<std::mutex> lock(dictation_mutex_);
     
+    // TODO: Реализовать реальный аудио поток из audio_buffer
+    // Пока используем заглушку для тестирования
+    std::vector<int16_t> empty_chunk;
+    bool audio_available = false;
+    
     while (running_ && state_ == DaemonState::Listening) {
-        // Симулируем получение аудио и распознавание
+        // Провайдер аудио: возвращает true если есть данные, false если поток закончился
         backend_->transcribe_stream(
-            [](const int16_t*, size_t) {
-                // Dummy бэкенд не требует реального аудио
+            [&](std::vector<int16_t>& chunk) -> bool {
+                // Проверяем, нужно ли продолжать
+                if (!running_ || state_ != DaemonState::Listening) {
+                    return false; // Поток закончился
+                }
+                
+                // TODO: Читать реальное аудио из audio_buffer или audio_capture
+                // Пока возвращаем пустой чанк для dummy бэкенда
+                // Для Vosk бэкенда здесь должен быть реальный аудио поток
+                chunk = empty_chunk;
+                
+                // Небольшая задержка чтобы не нагружать CPU
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                
+                // Возвращаем true чтобы продолжить, false чтобы остановиться
+                return running_ && state_ == DaemonState::Listening;
             },
             [this](const ASRResult& result) {
                 if (result.is_final && !result.text.empty()) {

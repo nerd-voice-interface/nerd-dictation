@@ -21,11 +21,15 @@ public:
     
     /**
      * Потоковое распознавание
-     * audio_callback вызывается для получения аудио данных
-     * result_callback вызывается для передачи результатов
+     * 
+     * audio_provider вызывается для получения следующего чанка аудио
+     *   Возвращает true если есть данные, false если поток закончился
+     *   Заполняет переданный буфер аудио данными
+     * 
+     * result_callback вызывается для передачи результатов распознавания
      */
     virtual void transcribe_stream(
-        std::function<void(const int16_t*, size_t)> audio_callback,
+        std::function<bool(std::vector<int16_t>&)> audio_provider,
         std::function<void(const ASRResult&)> result_callback
     ) = 0;
     

@@ -29,18 +29,21 @@ backends/
 В основном `CMakeLists.txt`:
 
 ```cmake
-# Vosk бэкенд
-if(ENABLE_VOSK_BACKEND)
-    add_subdirectory(backends/vosk)
-    target_link_libraries(nerd-dictation-ex PRIVATE nerd-dictation-vosk)
-endif()
+# Vosk бэкенд (ОБЯЗАТЕЛЕН для wake word detection)
+add_subdirectory(backends/vosk)
+target_link_libraries(nerd-dictation-ex PRIVATE nerd-dictation-vosk)
 
-# GigaAM бэкенд
+# GigaAM бэкенд (опциональный)
 if(ENABLE_GIGAAM_BACKEND)
     add_subdirectory(backends/gigaam)
     target_link_libraries(nerd-dictation-ex PRIVATE nerd-dictation-gigaam)
 endif()
 ```
+
+**Важно:**
+- **Vosk всегда включён** - требуется для wake word detection
+- GigaAM опционален - используется только для основного распознавания
+- Даже при использовании GigaAM, Vosk нужен для активации по слову "запись"
 
 **Примечание:** Бэкенды собираются как динамические библиотеки (`.so` файлы), что позволяет:
 - Загружать их во время выполнения
