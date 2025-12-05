@@ -14,7 +14,7 @@ struct AudioConfig {
 
 struct Config {
     std::string backend = "dummy";
-    std::string input_method = "stdout";  // По умолчанию stdout для тестирования
+    std::string input_method = "xdotool";  // По умолчанию xdotool, как в оригинале
     AudioConfig audio;
     
     // Путь к модели (для реальных бэкендов)

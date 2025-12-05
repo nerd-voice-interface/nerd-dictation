@@ -8,33 +8,14 @@
 namespace nerd_dictation::input {
 
 InputSimulator::InputSimulator(const std::string& method) : method_(method) {
+    // Проверяем валидность метода (как в оригинале - без автоматического fallback)
     if (method != "ydotool" && method != "xdotool" && method != "wtype" && 
         method != "dotool" && method != "stdout") {
         spdlog::warn("Неизвестный метод ввода: {}, используется stdout", method);
         method_ = "stdout";
     }
-    
-    // Проверяем доступность инструмента (кроме stdout)
-    if (method_ != "stdout") {
-        std::string check_cmd;
-        if (method_ == "ydotool") {
-            check_cmd = "which ydotool > /dev/null 2>&1";
-        } else if (method_ == "xdotool") {
-            check_cmd = "which xdotool > /dev/null 2>&1";
-        } else if (method_ == "wtype") {
-            check_cmd = "which wtype > /dev/null 2>&1";
-        } else if (method_ == "dotool") {
-            check_cmd = "which dotool > /dev/null 2>&1";
-        }
-        
-        if (!check_cmd.empty()) {
-            int result = std::system(check_cmd.c_str());
-            if (result != 0) {
-                spdlog::warn("Инструмент {} не найден, используется stdout", method_);
-                method_ = "stdout";
-            }
-        }
-    }
+    // В оригинале нет автоматического fallback - просто используется указанный метод
+    // или выводится ошибка при выполнении команды
 }
 
 void InputSimulator::type_text(const std::string& text) {
@@ -56,16 +37,19 @@ void InputSimulator::type_text(const std::string& text) {
     } else if (method_ == "wtype") {
         cmd << "wtype " << std::quoted(text);
     } else if (method_ == "dotool") {
-        // dotool принимает команды через stdin
+        // dotool принимает команды через stdin (как в оригинале)
         std::string dotool_cmd = "type " + text;
         FILE* pipe = popen("dotool", "w");
         if (pipe) {
             fwrite(dotool_cmd.c_str(), 1, dotool_cmd.length(), pipe);
             pclose(pipe);
+        } else {
+            spdlog::error("Ошибка запуска dotool");
         }
         return;
     }
     
+    // Выполняем команду через shell (как в оригинале: subprocess.run с shell=True)
     spdlog::debug("Выполняю команду: {}", cmd.str());
     int result = std::system(cmd.str().c_str());
     if (result != 0) {
@@ -88,15 +72,28 @@ void InputSimulator::press_keys(const std::string& keys) {
     } else if (method_ == "wtype") {
         cmd << "wtype -k " << keys;
     } else if (method_ == "dotool") {
-        std::string dotool_cmd = "key " + keys;
+        // dotool: "key ctrl+enter" (как в оригинале)
+        std::string dotool_keys = keys;
+        // Заменяем Return на enter (как в оригинале)
+        size_t pos = dotool_keys.find("Return");
+        if (pos != std::string::npos) {
+            dotool_keys.replace(pos, 6, "enter");
+        }
+        // Приводим к нижнему регистру (как в оригинале)
+        std::transform(dotool_keys.begin(), dotool_keys.end(), dotool_keys.begin(), ::tolower);
+        
+        std::string dotool_cmd = "key " + dotool_keys;
         FILE* pipe = popen("dotool", "w");
         if (pipe) {
             fwrite(dotool_cmd.c_str(), 1, dotool_cmd.length(), pipe);
             pclose(pipe);
+        } else {
+            spdlog::error("Ошибка запуска dotool");
         }
         return;
     }
     
+    // Выполняем команду через shell (как в оригинале)
     spdlog::debug("Нажимаю клавиши: {}", cmd.str());
     int result = std::system(cmd.str().c_str());
     if (result != 0) {
