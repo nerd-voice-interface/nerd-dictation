@@ -166,25 +166,34 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
         return "";
     }
     
-    // Добавляем буферизованный пробел от предыдущего фрагмента
+    // Добавляем буферизованный пробел от предыдущего фрагмента (как в оригинале)
     if (pending_space_ && !processed.empty()) {
-        // Проверяем первый символ (может быть многосимвольным для эмодзи)
+        // Проверяем первый символ/последовательность символов
         bool needs_space = true;
+        
+        // Проверяем многосимвольные последовательности (многоточие, эмодзи)
         for (const std::string& punct : NO_SPACE_BEFORE) {
-            if (processed.find(punct) == 0) {
+            if (processed.length() >= punct.length() && 
+                processed.substr(0, punct.length()) == punct) {
                 needs_space = false;
                 break;
             }
         }
-        // Также проверяем однобайтовые символы
-        if (needs_space && processed.length() > 0) {
-            char first_char = processed[0];
-            if (first_char == '.' || first_char == ',' || first_char == ':' || 
-                first_char == '!' || first_char == '?' || first_char == '—' || 
-                first_char == '-' || first_char == '»' || first_char == ')') {
-                needs_space = false;
+        
+        // Также проверяем однобайтовые символы (для быстрой проверки)
+        if (needs_space && !processed.empty()) {
+            unsigned char first_byte = static_cast<unsigned char>(processed[0]);
+            // Проверяем только ASCII символы
+            if (first_byte < 128) {
+                char first_char = static_cast<char>(first_byte);
+                if (first_char == '.' || first_char == ',' || first_char == ':' || 
+                    first_char == '!' || first_char == '?' || first_char == '-' || 
+                    first_char == '»' || first_char == ')') {
+                    needs_space = false;
+                }
             }
         }
+        
         if (needs_space) {
             processed = " " + processed;
         }
