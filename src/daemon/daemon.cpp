@@ -13,13 +13,17 @@
 #include <iostream>
 #include <cstdlib>
 
-// Простой JSON парсер (заглушка, можно заменить на nlohmann/json)
+// Простой JSON парсер (заглушка)
 namespace {
 std::string json_escape(const std::string& s) {
     std::string result;
     for (char c : s) {
-        if (c == '"' || c == '\\') result += '\\';
-        result += c;
+        if (c == '"') result += "\\\"";
+        else if (c == '\\') result += "\\\\";
+        else if (c == '\n') result += "\\n";
+        else if (c == '\r') result += "\\r";
+        else if (c == '\t') result += "\\t";
+        else result += c;
     }
     return result;
 }

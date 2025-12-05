@@ -4,6 +4,8 @@
 #include <cctype>
 #include <map>
 #include <set>
+#include <string>
+#include <vector>
 
 namespace nerd_dictation::input {
 
