@@ -606,7 +606,6 @@ void DictationDaemon::wake_word_loop() {
             }
         }
     }
-    #endif
 }
 
 } // namespace nerd_dictation::daemon
