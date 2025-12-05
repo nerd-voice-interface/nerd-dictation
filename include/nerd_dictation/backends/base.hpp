@@ -4,6 +4,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
+#include <filesystem>
 
 namespace nerd_dictation::backends {
 
