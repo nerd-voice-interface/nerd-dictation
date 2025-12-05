@@ -66,10 +66,8 @@ private:
     std::string wake_word_ = "запись";
     std::atomic<bool> wake_word_running_{false};
     
-    #ifdef ENABLE_VOSK_BACKEND
     vosk_model_t* wake_word_model_ = nullptr;
     vosk_recognizer_t* wake_word_recognizer_ = nullptr;
-    #endif
     
     void dictation_loop();
     void socket_server_loop();

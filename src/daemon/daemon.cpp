@@ -346,7 +346,6 @@ bool DictationDaemon::load_wake_word_models() {
         return false;
     }
     
-    #ifdef ENABLE_VOSK_BACKEND
     std::string model_path = config_.wake_word.model_path;
     
     // Разворачиваем ~
@@ -375,10 +374,6 @@ bool DictationDaemon::load_wake_word_models() {
     
     spdlog::info("Vosk модель для wake word загружена");
     return true;
-    #else
-    spdlog::warn("Vosk backend не доступен, wake word detection отключён");
-    return false;
-    #endif
 }
 
 void DictationDaemon::start_audio_listener() {
@@ -481,7 +476,6 @@ void DictationDaemon::audio_listener_loop() {
 }
 
 void DictationDaemon::wake_word_loop() {
-    #ifdef ENABLE_VOSK_BACKEND
     if (!wake_word_recognizer_) {
         return;
     }

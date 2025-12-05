@@ -98,7 +98,7 @@ nerd-dictation/
 ## Опции сборки
 
 ```bash
-cmake -DENABLE_VOSK_BACKEND=ON \
+cmake \
       -DENABLE_GIGAAM_BACKEND=OFF \
       -DENABLE_TESTS=OFF \
       ..

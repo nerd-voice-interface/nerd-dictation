@@ -76,10 +76,7 @@ target_link_libraries(nerd-dictation-vosk
     ${VOSK_LIB}
 )
 
-target_compile_definitions(nerd-dictation-vosk
-    PUBLIC
-    ENABLE_VOSK_BACKEND
-)
+# Vosk backend всегда включен, определение не нужно
 
 # ============================================================================
 # Установка

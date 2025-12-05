@@ -24,7 +24,6 @@ cd "${BUILD_DIR}"
 cmake .. \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DENABLE_VOSK_BACKEND=ON \
     -DENABLE_GIGAAM_BACKEND=OFF
 
 # Сборка
