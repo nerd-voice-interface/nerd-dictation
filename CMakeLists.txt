@@ -263,26 +263,34 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
 
 # ============================================================================
-# Бэкенды (опционально)
+# Бэкенды
 # ============================================================================
 
-option(ENABLE_VOSK_BACKEND "Enable Vosk backend" OFF)
+# Vosk обязателен для wake word detection
+option(ENABLE_VOSK_BACKEND "Enable Vosk backend (required for wake word)" ON)
+
+# GigaAM опционален
 option(ENABLE_GIGAAM_BACKEND "Enable GigaAM backend" OFF)
+option(ENABLE_GIGAAM_ONNX_BACKEND "Enable GigaAM-ONNX backend" OFF)
 
-if(ENABLE_VOSK_BACKEND)
-    add_subdirectory(backends/vosk)
-    target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-vosk)
-    message(STATUS "Vosk backend: ENABLED")
-else()
-    message(STATUS "Vosk backend: DISABLED")
-endif()
+# Vosk бэкенд (обязательный)
+add_subdirectory(backends/vosk)
+target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-vosk)
+message(STATUS "Vosk backend: ENABLED (required for wake word detection)")
 
+# GigaAM бэкенд (опциональный)
 if(ENABLE_GIGAAM_BACKEND)
     add_subdirectory(backends/gigaam)
     target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-gigaam)
     message(STATUS "GigaAM backend: ENABLED")
 else()
     message(STATUS "GigaAM backend: DISABLED")
+endif()
+
+# GigaAM-ONNX бэкенд (опциональный, если будет реализован)
+if(ENABLE_GIGAAM_ONNX_BACKEND)
+    # TODO: добавить когда будет реализован
+    message(STATUS "GigaAM-ONNX backend: Not yet implemented")
 endif()
 
 # ============================================================================
