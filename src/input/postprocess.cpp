@@ -43,7 +43,7 @@ static const std::map<std::string, std::string> PUNCTUATION_MAP = {
 static const std::set<char> CAPITALIZE_AFTER = {'.', '!', '?', '\n'};
 
 // Знаки перед которыми удаляется пробел
-static const std::set<char> NO_SPACE_BEFORE = {'.', ',', ':', '!', '?', '—', '-', '»', ')'};
+static const std::set<std::string> NO_SPACE_BEFORE = {".", ",", ":", "!", "?", "—", "-", "»", ")"};
 
 std::vector<Action> TextPostProcessor::extract_key_actions(const std::string& text) {
     std::vector<Action> actions;
@@ -66,11 +66,12 @@ std::vector<Action> TextPostProcessor::extract_key_actions(const std::string& te
             std::regex pattern("\\b" + std::regex_replace(word, std::regex("([.*+?^${}()|[\\]\\\\])"), "\\$1") + "\\b",
                              std::regex_constants::icase);
             std::smatch match;
+            std::string search_str = remaining.substr(pos);
             
-            if (std::regex_search(remaining.begin() + pos, remaining.end(), match, pattern)) {
+            if (std::regex_search(search_str, match, pattern)) {
                 // Текст до ключевого слова
                 if (match.position() > 0) {
-                    std::string before = remaining.substr(pos, match.position());
+                    std::string before = search_str.substr(0, match.position());
                     std::string processed = apply_capitalization(replace_punctuation(before));
                     if (!processed.empty()) {
                         actions.push_back(TextAction{processed});
@@ -121,13 +122,12 @@ std::string TextPostProcessor::replace_punctuation(const std::string& text) {
     }
     
     // Убираем пробелы перед знаками препинания
-    for (char punct : NO_SPACE_BEFORE) {
-        std::string punct_str(1, punct);
-        std::string space_punct = " " + punct_str;
+    for (const std::string& punct : NO_SPACE_BEFORE) {
+        std::string space_punct = " " + punct;
         size_t pos = 0;
         while ((pos = result.find(space_punct, pos)) != std::string::npos) {
-            result.replace(pos, space_punct.length(), punct_str);
-            pos += punct_str.length();
+            result.replace(pos, space_punct.length(), punct);
+            pos += punct.length();
         }
     }
     

@@ -33,7 +33,7 @@ public:
     }
     
     void transcribe_stream(
-        std::function<void(const int16_t*, size_t)> audio_callback,
+        std::function<void(const int16_t*, size_t)> /* audio_callback */,
         std::function<void(const ASRResult&)> result_callback
     ) override {
         if (!model_loaded_) {

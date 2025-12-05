@@ -68,7 +68,14 @@ endif()
 # TOML11 (header-only)
 if(EXISTS "${THIRDPARTY_DIR}/toml11")
     message(STATUS "Using TOML11 from ThirdParty submodule")
-    add_subdirectory(${THIRDPARTY_DIR}/toml11)
+    # toml11 имеет структуру: include/toml.hpp или include/toml11/toml.hpp
+    if(EXISTS "${THIRDPARTY_DIR}/toml11/include/toml11/toml.hpp")
+        set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11/include")
+    elseif(EXISTS "${THIRDPARTY_DIR}/toml11/include/toml.hpp")
+        set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11/include")
+    else()
+        set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11")
+    endif()
     set(TOML11_FOUND TRUE)
 else()
     # Попробуем найти системную версию
@@ -110,12 +117,12 @@ endif()
 # CLI11 (header-only)
 if(EXISTS "${THIRDPARTY_DIR}/CLI11")
     message(STATUS "Using CLI11 from ThirdParty submodule")
-    add_subdirectory(${THIRDPARTY_DIR}/CLI11)
+    set(CLI11_INCLUDE "${THIRDPARTY_DIR}/CLI11/include")
     set(CLI11_FOUND TRUE)
 else()
     # Попробуем найти системную версию
     find_path(CLI11_INCLUDE
-        NAMES CLI11/CLI.hpp
+        NAMES CLI/CLI.hpp
         PATHS
             /usr/include
             /usr/local/include
@@ -124,10 +131,9 @@ else()
         message(STATUS "Using system CLI11: ${CLI11_INCLUDE}")
         set(CLI11_FOUND TRUE)
     else()
-        message(WARNING "CLI11 not found. Initialize submodule:")
-        message(WARNING "  git submodule add https://github.com/CLIUtils/CLI11.git ThirdParty/CLI11")
-        message(WARNING "  git submodule update --init --recursive")
-        message(FATAL_ERROR "CLI11 is required")
+        message(FATAL_ERROR "CLI11 not found. Initialize submodule:")
+        message(FATAL_ERROR "  git submodule add https://github.com/CLIUtils/CLI11.git ThirdParty/CLI11")
+        message(FATAL_ERROR "  git submodule update --init --recursive")
     endif()
 endif()
 
@@ -203,22 +209,14 @@ target_include_directories(${PROJECT_NAME}
     ${PULSE_INCLUDE_DIRS}
 )
 
-# TOML11
+# TOML11 (header-only)
 if(TOML11_FOUND)
-    if(TARGET toml11)
-        target_link_libraries(${PROJECT_NAME} PRIVATE toml11)
-    else()
-        target_include_directories(${PROJECT_NAME} PRIVATE ${TOML11_INCLUDE})
-    endif()
+    target_include_directories(${PROJECT_NAME} PRIVATE ${TOML11_INCLUDE})
 endif()
 
-# CLI11
+# CLI11 (header-only)
 if(CLI11_FOUND)
-    if(TARGET CLI11::CLI11)
-        target_link_libraries(${PROJECT_NAME} PRIVATE CLI11::CLI11)
-    else()
-        target_include_directories(${PROJECT_NAME} PRIVATE ${CLI11_INCLUDE})
-    endif()
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CLI11_INCLUDE})
 endif()
 
 # ============================================================================

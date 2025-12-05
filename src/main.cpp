@@ -4,7 +4,7 @@
 #include "nerd_dictation/input/input_simulator.hpp"
 #include "nerd_dictation/input/postprocess.hpp"
 #include "nerd_dictation/sounds/sounds.hpp"
-#include <CLI11/CLI.hpp>
+#include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <unistd.h>

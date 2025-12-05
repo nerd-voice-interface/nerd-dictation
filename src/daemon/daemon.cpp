@@ -1,4 +1,5 @@
 #include "nerd_dictation/daemon/daemon.hpp"
+#include "nerd_dictation/types.hpp"
 #include "nerd_dictation/backends/dummy_backend.hpp"
 #include "nerd_dictation/input/input_simulator.hpp"
 #include "nerd_dictation/input/postprocess.hpp"
@@ -105,7 +106,7 @@ void DictationDaemon::dictation_loop() {
             [](const int16_t*, size_t) {
                 // Dummy бэкенд не требует реального аудио
             },
-            [this](const backends::ASRResult& result) {
+            [this](const ASRResult& result) {
                 if (result.is_final && !result.text.empty()) {
                     spdlog::info("Распознано: {}", result.text);
                     process_and_type(result.text);

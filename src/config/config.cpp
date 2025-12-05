@@ -1,5 +1,5 @@
 #include "nerd_dictation/config.hpp"
-#include <toml11/toml.hpp>
+#include <toml.hpp>
 #include <spdlog/spdlog.h>
 #include <cstdlib>
 #include <filesystem>
