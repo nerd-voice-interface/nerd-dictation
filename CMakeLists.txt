@@ -293,10 +293,20 @@ configure_file(
     @ONLY
 )
 
-# Установка systemd service файла
-install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
-    DESTINATION lib/systemd/user
-)
+# Установка systemd service файла (только если не системная установка)
+if(NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr" AND 
+   NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
+    # Локальная установка - в lib/systemd/user
+    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+        DESTINATION lib/systemd/user
+    )
+    message(STATUS "Systemd service будет установлен в: ${CMAKE_INSTALL_PREFIX}/lib/systemd/user/")
+else()
+    # Системная установка - в /usr/lib/systemd/user
+    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation-ex.service
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/user
+    )
+endif()
 
 # ============================================================================
 # Бэкенды
