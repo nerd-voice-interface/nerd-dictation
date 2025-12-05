@@ -20,7 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation
+ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation %t
 
 # Ограничения ресурсов
 MemoryMax=2G
