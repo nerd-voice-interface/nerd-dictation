@@ -316,25 +316,17 @@ endif()
 # Бэкенды
 # ============================================================================
 
-# Vosk обязателен для wake word detection
-option(ENABLE_VOSK_BACKEND "Enable Vosk backend (required for wake word)" ON)
-
 # GigaAM опционален
 option(ENABLE_GIGAAM_BACKEND "Enable GigaAM backend" OFF)
 option(ENABLE_GIGAAM_ONNX_BACKEND "Enable GigaAM-ONNX backend" OFF)
 
-# Vosk бэкенд (обязательный)
-if(ENABLE_VOSK_BACKEND)
-    add_subdirectory(backends/vosk)
-    if(TARGET nerd-dictation-vosk)
-        target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-vosk)
-        message(STATUS "Vosk backend: ENABLED (required for wake word detection)")
-    else()
-        message(WARNING "Vosk backend target not created. Building without Vosk backend.")
-        message(WARNING "Wake word detection will not work!")
-    endif()
+# Vosk бэкенд (обязательный, всегда включен)
+add_subdirectory(backends/vosk)
+if(TARGET nerd-dictation-vosk)
+    target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-vosk)
+    message(STATUS "Vosk backend: ENABLED (required for wake word detection)")
 else()
-    message(WARNING "Vosk backend is DISABLED. Wake word detection will not work!")
+    message(FATAL_ERROR "Vosk backend target not created. Vosk is REQUIRED for wake word detection.")
 endif()
 
 # GigaAM бэкенд (опциональный)

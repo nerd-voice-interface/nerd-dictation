@@ -11,10 +11,7 @@
 #include <vector>
 #include <queue>
 #include <deque>
-
-#ifdef ENABLE_VOSK_BACKEND
 #include <vosk/vosk.h>
-#endif
 
 namespace nerd_dictation::daemon {
 
