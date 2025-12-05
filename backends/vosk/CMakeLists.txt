@@ -58,7 +58,7 @@ set(VOSK_HEADERS
 # Библиотека
 # ============================================================================
 
-add_library(nerd-dictation-vosk STATIC
+add_library(nerd-dictation-vosk SHARED
     ${VOSK_SOURCES}
     ${VOSK_HEADERS}
 )
@@ -85,10 +85,18 @@ target_compile_definitions(nerd-dictation-vosk
 # ============================================================================
 
 install(TARGETS nerd-dictation-vosk
-    ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
 )
 
 install(FILES ${VOSK_HEADERS}
     DESTINATION include/nerd_dictation_vosk
+)
+
+# Экспорт символов для динамической библиотеки
+set_target_properties(nerd-dictation-vosk PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    POSITION_INDEPENDENT_CODE ON
 )
