@@ -1,6 +1,6 @@
 [Unit]
 Description=nerd-dictation daemon
-Documentation=https://github.com/marcusmae/nerd-dictation-ex
+Documentation=https://github.com/marcusmae/nerd-dictation
 After=pipewire.service pipewire-pulse.service sound.target
 Wants=pipewire.service pipewire-pulse.service
 
