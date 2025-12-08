@@ -62,13 +62,13 @@ else()
     message(FATAL_ERROR "PipeWire not found. Install: sudo pacman -S libpipewire")
 endif()
 
-# PulseAudio (fallback)
-pkg_check_modules(PULSE libpulse)
-if(PULSE_FOUND)
-    message(STATUS "PulseAudio found: ${PULSE_VERSION}")
+# PulseAudio Simple API (для воспроизведения звуков)
+pkg_check_modules(PULSE_SIMPLE libpulse-simple)
+if(PULSE_SIMPLE_FOUND)
+    message(STATUS "PulseAudio Simple API found: ${PULSE_SIMPLE_VERSION}")
     add_definitions(-DHAVE_PULSEAUDIO)
 else()
-    message(WARNING "PulseAudio not found, only PipeWire will be available")
+    message(WARNING "PulseAudio Simple API not found, sound notifications will be disabled")
 endif()
 
 # ============================================================================
@@ -243,10 +243,10 @@ target_compile_options(${PROJECT_NAME}
     ${PIPEWIRE_CFLAGS_OTHER}
 )
 
-# PulseAudio (если найден)
-if(PULSE_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${PULSE_LIBRARIES})
-    target_include_directories(${PROJECT_NAME} PRIVATE ${PULSE_INCLUDE_DIRS})
+# PulseAudio Simple API (для звуковых уведомлений)
+if(PULSE_SIMPLE_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PULSE_SIMPLE_LIBRARIES})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${PULSE_SIMPLE_INCLUDE_DIRS})
 endif()
 
 # spdlog
@@ -387,7 +387,7 @@ message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "")
 message(STATUS "Core Dependencies:")
 message(STATUS "  PipeWire: ${PIPEWIRE_VERSION}")
-message(STATUS "  PulseAudio: ${PULSE_FOUND}")
+message(STATUS "  PulseAudio Simple: ${PULSE_SIMPLE_FOUND}")
 message(STATUS "  TOML11: ${TOML11_FOUND}")
 message(STATUS "  spdlog: ${SPDLOG_FOUND}")
 message(STATUS "  CLI11: ${CLI11_FOUND}")

@@ -152,6 +152,9 @@ DictationDaemon::~DictationDaemon() {
         vosk_model_free(wake_word_model_);
     }
 #endif
+
+    /* Shutdown sound system */
+    sounds::shutdown_sounds();
 }
 
 void DictationDaemon::process_and_type(const std::string& text) {
@@ -360,6 +363,9 @@ void DictationDaemon::socket_server_loop() {
 }
 
 void DictationDaemon::run() {
+    /* Initialize sound system */
+    sounds::init_sounds();
+
     /* Start audio listener */
     start_audio_listener();
 
