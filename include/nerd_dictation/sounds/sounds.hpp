@@ -58,19 +58,10 @@ private:
     SoundPlayer(const SoundPlayer&) = delete;
     SoundPlayer& operator=(const SoundPlayer&) = delete;
 
-    void playback_thread();
-    bool play_wav_pipewire(const WavData& wav);
-    bool play_wav_pulseaudio(const WavData& wav);
+    void play_wav_async(const WavData& wav);
 
     std::unordered_map<std::string, WavData> sounds_;
     std::mutex sounds_mutex_;
-
-    std::queue<std::string> play_queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
-
-    std::thread playback_thread_;
-    std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
 };
 

@@ -175,11 +175,7 @@ bool SoundPlayer::init() {
         }
     }
 
-    /* Start playback thread */
-    running_ = true;
-    playback_thread_ = std::thread(&SoundPlayer::playback_thread, this);
     initialized_ = true;
-
     spdlog::info("Звуковая подсистема инициализирована");
     return true;
 }
@@ -187,13 +183,6 @@ bool SoundPlayer::init() {
 void SoundPlayer::shutdown() {
     if (!initialized_) {
         return;
-    }
-
-    running_ = false;
-    queue_cv_.notify_all();
-
-    if (playback_thread_.joinable()) {
-        playback_thread_.join();
     }
 
     {
@@ -221,112 +210,52 @@ void SoundPlayer::play(const std::string& name) {
         return;
     }
 
+    WavData wav;
     {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        play_queue_.push(name);
-    }
-    queue_cv_.notify_one();
-}
-
-void SoundPlayer::playback_thread() {
-    spdlog::debug("Поток воспроизведения звуков запущен");
-
-    while (running_) {
-        std::string sound_name;
-
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_cv_.wait(lock, [this] {
-                return !play_queue_.empty() || !running_;
-            });
-
-            if (!running_) {
-                break;
-            }
-
-            if (!play_queue_.empty()) {
-                sound_name = play_queue_.front();
-                play_queue_.pop();
-            }
-        }
-
-        if (!sound_name.empty()) {
-            WavData wav;
-            {
-                std::lock_guard<std::mutex> lock(sounds_mutex_);
-                auto it = sounds_.find(sound_name);
-                if (it != sounds_.end()) {
-                    wav = it->second;  /* Copy for thread safety */
-                }
-            }
-
-            if (wav.valid()) {
-#ifdef HAVE_PULSEAUDIO
-                play_wav_pulseaudio(wav);
-#else
-                spdlog::debug("Воспроизведение недоступно (нет PulseAudio)");
-#endif
-            } else {
-                spdlog::debug("Звук не найден: {}", sound_name);
-            }
+        std::lock_guard<std::mutex> lock(sounds_mutex_);
+        auto it = sounds_.find(name);
+        if (it != sounds_.end()) {
+            wav = it->second;  /* Copy for thread safety */
         }
     }
 
-    spdlog::debug("Поток воспроизведения звуков остановлен");
+    if (wav.valid()) {
+        play_wav_async(wav);
+    } else {
+        spdlog::debug("Звук не найден: {}", name);
+    }
 }
 
 #ifdef HAVE_PULSEAUDIO
-bool SoundPlayer::play_wav_pulseaudio(const WavData& wav) {
-    pa_sample_spec ss;
-    ss.format = PA_SAMPLE_S16LE;
-    ss.rate = wav.sample_rate;
-    ss.channels = wav.channels;
+void SoundPlayer::play_wav_async(const WavData& wav) {
+    /* Play in detached thread for parallel playback */
+    std::thread([wav]() {
+        pa_sample_spec ss;
+        ss.format = PA_SAMPLE_S16LE;
+        ss.rate = wav.sample_rate;
+        ss.channels = static_cast<uint8_t>(wav.channels);
 
-    int error;
-    pa_simple* s = pa_simple_new(
-        nullptr,                /* Default server */
-        "nerd-dictation",       /* Application name */
-        PA_STREAM_PLAYBACK,
-        nullptr,                /* Default device */
-        "notification",         /* Stream name */
-        &ss,
-        nullptr,                /* Default channel map */
-        nullptr,                /* Default buffering */
-        &error
-    );
+        int error;
+        pa_simple* s = pa_simple_new(
+            nullptr, "nerd-dictation", PA_STREAM_PLAYBACK,
+            nullptr, "notification", &ss, nullptr, nullptr, &error
+        );
+        if (!s) {
+            spdlog::warn("PulseAudio ошибка: {}", pa_strerror(error));
+            return;
+        }
 
-    if (!s) {
-        spdlog::warn("PulseAudio ошибка: {}", pa_strerror(error));
-        return false;
-    }
-
-    /* Write audio data */
-    size_t bytes = wav.samples.size() * sizeof(int16_t);
-    if (pa_simple_write(s, wav.samples.data(), bytes, &error) < 0) {
-        spdlog::warn("PulseAudio write ошибка: {}", pa_strerror(error));
+        size_t bytes = wav.samples.size() * sizeof(int16_t);
+        pa_simple_write(s, wav.samples.data(), bytes, &error);
+        pa_simple_drain(s, &error);
         pa_simple_free(s);
-        return false;
-    }
-
-    /* Drain buffer */
-    if (pa_simple_drain(s, &error) < 0) {
-        spdlog::warn("PulseAudio drain ошибка: {}", pa_strerror(error));
-    }
-
-    pa_simple_free(s);
-    return true;
+    }).detach();
 }
 #else
-bool SoundPlayer::play_wav_pulseaudio(const WavData&) {
-    return false;
+void SoundPlayer::play_wav_async(const WavData&) {
+    spdlog::debug("Воспроизведение недоступно (нет PulseAudio)");
 }
 #endif
-
-bool SoundPlayer::play_wav_pipewire(const WavData&) {
-    /* PipeWire playback - not implemented yet */
-    /* PulseAudio simple API is easier for one-shot sounds */
-    return false;
-}
 
 /* ========================================================================== */
 /* Public API                                                                  */
