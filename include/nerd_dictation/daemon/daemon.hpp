@@ -1,7 +1,7 @@
 #pragma once
 
 #include "nerd_dictation/config.hpp"
-#include "nerd_dictation/backends/base.hpp"
+#include "nerd_dictation/backend_wrapper.hpp"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -11,7 +11,16 @@
 #include <vector>
 #include <queue>
 #include <deque>
-#include <vosk/vosk.h>
+
+/* Forward declarations for Vosk (wake word only) */
+#if HAVE_VOSK_WAKE_WORD
+struct VoskModel;
+struct VoskRecognizer;
+#else
+/* Stubs when Vosk is not available at compile time */
+using VoskModel = void;
+using VoskRecognizer = void;
+#endif
 
 namespace nerd_dictation::daemon {
 
@@ -24,51 +33,53 @@ enum class DaemonState {
 /**
  * Daemon для nerd-dictation
  * Держит модель в памяти и обрабатывает команды через Unix socket
+ *
+ * Использует C API для бекендов (загружает .so динамически)
  */
 class DictationDaemon {
 private:
     Config config_;
-    std::unique_ptr<backends::ASRBackend> backend_;
-    
+    std::unique_ptr<Backend> backend_;
+
     std::atomic<DaemonState> state_{DaemonState::Idle};
     std::atomic<bool> running_{true};
-    
-    // Потоки
+
+    /* Потоки */
     std::thread dictation_thread_;
     std::thread socket_thread_;
     std::thread wake_word_thread_;
     std::thread audio_listener_thread_;
-    
-    // Синхронизация
+
+    /* Синхронизация */
     std::mutex dictation_mutex_;
     std::condition_variable dictation_cv_;
     std::mutex audio_buffer_mutex_;
     std::mutex wake_word_queue_mutex_;
-    
-    // Unix socket
+
+    /* Unix socket */
     std::string socket_path_;
     int server_fd_ = -1;
-    
-    // Аудио буфер для диктовки (кольцевой буфер)
+
+    /* Аудио буфер для диктовки (кольцевой буфер) */
     std::deque<std::vector<int16_t>> audio_buffer_;
     size_t audio_buffer_max_chunks_ = 100;
     static constexpr size_t AUDIO_BUFFER_SECONDS = 1.5;
-    
-    // Очередь для wake word detection (без лимита)
+
+    /* Очередь для wake word detection (без лимита) */
     std::queue<std::vector<int16_t>> wake_word_queue_;
-    
-    // Процесс захвата аудио
+
+    /* Процесс захвата аудио */
     int audio_proc_pid_ = -1;
     FILE* audio_proc_pipe_ = nullptr;
-    
-    // Wake word detection (требует Vosk)
+
+    /* Wake word detection (требует Vosk) */
     bool wake_word_enabled_ = true;
     std::string wake_word_ = "запись";
     std::atomic<bool> wake_word_running_{false};
-    
-    vosk_model_t* wake_word_model_ = nullptr;
-    vosk_recognizer_t* wake_word_recognizer_ = nullptr;
-    
+
+    VoskModel* wake_word_model_ = nullptr;
+    VoskRecognizer* wake_word_recognizer_ = nullptr;
+
     void dictation_loop();
     void socket_server_loop();
     void handle_client(int client_fd);
@@ -80,31 +91,31 @@ private:
     void start_wake_word_detection();
     std::vector<int16_t> get_audio_chunk();
     std::string get_audio_command() const;
-    
+
 public:
     explicit DictationDaemon(const Config& config);
     ~DictationDaemon();
-    
+
     /**
      * Запустить daemon (блокирующий вызов)
      */
     void run();
-    
+
     /**
      * Начать диктовку
      */
     void begin_dictation();
-    
+
     /**
      * Завершить диктовку
      */
     void end_dictation();
-    
+
     /**
      * Отменить диктовку
      */
     void cancel_dictation();
-    
+
     /**
      * Получить статус
      */
@@ -112,4 +123,4 @@ public:
     std::string get_backend_name() const;
 };
 
-} // namespace nerd_dictation::daemon
+} /* namespace nerd_dictation::daemon */

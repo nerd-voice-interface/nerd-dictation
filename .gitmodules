@@ -10,3 +10,9 @@
 [submodule "/home/marcusmae/forge/nerd-dictation/ThirdParty/eigen"]
 	path = /home/marcusmae/forge/nerd-dictation/ThirdParty/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "backends/vosk/ThirdParty/vosk-api"]
+	path = backends/vosk/ThirdParty/vosk-api
+	url = https://github.com/alphacep/vosk-api.git
+[submodule "backends/vosk/ThirdParty/sherpa-onnx"]
+	path = backends/vosk/ThirdParty/sherpa-onnx
+	url = https://github.com/k2-fsa/sherpa-onnx.git

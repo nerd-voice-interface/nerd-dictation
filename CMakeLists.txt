@@ -313,35 +313,47 @@ else()
 endif()
 
 # ============================================================================
-# Бэкенды
+# Бэкенды ASR (late binding через dlopen)
+# ============================================================================
+#
+# ВАЖНО: Бэкенды НЕ линкуются при компиляции!
+# Они загружаются динамически через dlopen() в runtime.
+#
+# Бэкенды собираются отдельно как shared libraries:
+#   - libnerd-dictation-t-one.so   (T-one CTC, 8kHz)
+#   - libnerd-dictation-gigaam.so  (GigaAM v3 CTC, 16kHz)
+#   - libnerd-dictation-vosk.so    (Vosk/Kaldi)
+#
+# Установите бэкенды в /usr/lib или укажите путь в конфиге.
+#
+
+# Для dlopen нужна libdl
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
+
+# ============================================================================
+# Vosk для wake word detection (опционально линкуется напрямую)
 # ============================================================================
 
-# GigaAM опционален
-option(ENABLE_GIGAAM_BACKEND "Enable GigaAM backend" OFF)
-option(ENABLE_GIGAAM_ONNX_BACKEND "Enable GigaAM-ONNX backend" OFF)
+option(ENABLE_VOSK_WAKE_WORD "Enable Vosk for wake word detection" ON)
 
-# Vosk бэкенд (обязательный, всегда включен)
-add_subdirectory(backends/vosk)
-if(TARGET nerd-dictation-vosk)
-    target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-vosk)
-    message(STATUS "Vosk backend: ENABLED (required for wake word detection)")
+if(ENABLE_VOSK_WAKE_WORD)
+    # Поиск libvosk
+    find_library(VOSK_LIBRARY vosk
+        PATHS /usr/lib /usr/local/lib
+    )
+
+    if(VOSK_LIBRARY)
+        message(STATUS "Vosk library found: ${VOSK_LIBRARY} (wake word detection)")
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${VOSK_LIBRARY})
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK_WAKE_WORD=1)
+    else()
+        message(WARNING "Vosk library not found. Wake word detection will be disabled.")
+        message(WARNING "Install vosk: https://alphacephei.com/vosk/")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK_WAKE_WORD=0)
+    endif()
 else()
-    message(FATAL_ERROR "Vosk backend target not created. Vosk is REQUIRED for wake word detection.")
-endif()
-
-# GigaAM бэкенд (опциональный)
-if(ENABLE_GIGAAM_BACKEND)
-    add_subdirectory(backends/gigaam)
-    target_link_libraries(${PROJECT_NAME} PRIVATE nerd-dictation-gigaam)
-    message(STATUS "GigaAM backend: ENABLED")
-else()
-    message(STATUS "GigaAM backend: DISABLED")
-endif()
-
-# GigaAM-ONNX бэкенд (опциональный, если будет реализован)
-if(ENABLE_GIGAAM_ONNX_BACKEND)
-    # TODO: добавить когда будет реализован
-    message(STATUS "GigaAM-ONNX backend: Not yet implemented")
+    message(STATUS "Vosk wake word detection: DISABLED")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK_WAKE_WORD=0)
 endif()
 
 # ============================================================================
@@ -362,6 +374,7 @@ message(STATUS "=== Configuration Summary ===")
 message(STATUS "Project: ${PROJECT_NAME} ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "")
 message(STATUS "Core Dependencies:")
 message(STATUS "  PipeWire: ${PIPEWIRE_VERSION}")
@@ -371,14 +384,17 @@ message(STATUS "  spdlog: ${SPDLOG_FOUND}")
 message(STATUS "  CLI11: ${CLI11_FOUND}")
 message(STATUS "  Eigen: ${EIGEN_FOUND}")
 message(STATUS "")
-message(STATUS "Backends:")
-message(STATUS "  Vosk: ENABLED (always enabled, required for wake word detection)")
-message(STATUS "  GigaAM: ${ENABLE_GIGAAM_BACKEND}")
-message(STATUS "  GigaAM-ONNX: ${ENABLE_GIGAAM_ONNX_BACKEND}")
+message(STATUS "Wake Word Detection:")
+if(VOSK_LIBRARY)
+    message(STATUS "  Vosk: ENABLED (${VOSK_LIBRARY})")
+else()
+    message(STATUS "  Vosk: DISABLED (library not found)")
+endif()
 message(STATUS "")
-message(STATUS "Note: Vosk is always enabled - required for wake word detection.")
-message(STATUS "      GigaAM backends are optional - used only for main recognition.")
-message(STATUS "      Backend dependencies are handled by their respective")
-message(STATUS "      CMake files in backends/ directory.")
+message(STATUS "ASR Backends (loaded via dlopen at runtime):")
+message(STATUS "  - libnerd-dictation-t-one.so   (T-one streaming CTC, 8kHz)")
+message(STATUS "  - libnerd-dictation-gigaam.so  (GigaAM v3 offline CTC, 16kHz)")
+message(STATUS "  - Install backends with: sudo pacman -U <package>.pkg.tar.zst")
+message(STATUS "")
 message(STATUS "============================")
 message(STATUS "")
