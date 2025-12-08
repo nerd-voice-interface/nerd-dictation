@@ -2,20 +2,79 @@
 #include <spdlog/spdlog.h>
 #include <cstdlib>
 #include <filesystem>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <array>
 
 namespace nerd_dictation::sounds {
 
-std::string find_sound_file(const std::string& name) {
-    // Проверяем в sounds/ относительно исполняемого файла
-    // Для простоты используем фиксированные пути или переменные окружения
-    const char* sounds_dir = std::getenv("NERD_DICTATION_SOUNDS_DIR");
-    if (sounds_dir) {
-        std::filesystem::path sound_path = std::filesystem::path(sounds_dir) / (name + ".wav");
-        if (std::filesystem::exists(sound_path)) {
-            return sound_path.string();
+namespace {
+
+/* Кэшированный плеер */
+std::string cached_player;
+bool player_checked = false;
+
+std::string find_player() {
+    if (player_checked) {
+        return cached_player;
+    }
+    player_checked = true;
+
+    /* Проверяем доступные плееры */
+    const std::array<const char*, 3> players = {"paplay", "pw-play", "aplay"};
+
+    for (const char* player : players) {
+        std::string which_cmd = std::string("which ") + player + " >/dev/null 2>&1";
+        if (std::system(which_cmd.c_str()) == 0) {
+            cached_player = player;
+            spdlog::debug("Используем аудио-плеер: {}", player);
+            return cached_player;
         }
     }
-    
+
+    spdlog::warn("Не найден аудио-плеер (paplay, pw-play или aplay)");
+    return "";
+}
+
+} /* anonymous namespace */
+
+std::string find_sound_file(const std::string& name) {
+    std::string filename = name + ".wav";
+
+    /* 1. Переменная окружения */
+    const char* sounds_dir = std::getenv("NERD_DICTATION_SOUNDS_DIR");
+    if (sounds_dir) {
+        std::filesystem::path path = std::filesystem::path(sounds_dir) / filename;
+        if (std::filesystem::exists(path)) {
+            return path.string();
+        }
+    }
+
+    /* 2. ~/.local/share/nerd-dictation/sounds/ */
+    const char* home = std::getenv("HOME");
+    if (home) {
+        std::filesystem::path path = std::filesystem::path(home) / ".local/share/nerd-dictation/sounds" / filename;
+        if (std::filesystem::exists(path)) {
+            return path.string();
+        }
+    }
+
+    /* 3. /usr/share/nerd-dictation/sounds/ */
+    {
+        std::filesystem::path path = std::filesystem::path("/usr/share/nerd-dictation/sounds") / filename;
+        if (std::filesystem::exists(path)) {
+            return path.string();
+        }
+    }
+
+    /* 4. /usr/local/share/nerd-dictation/sounds/ */
+    {
+        std::filesystem::path path = std::filesystem::path("/usr/local/share/nerd-dictation/sounds") / filename;
+        if (std::filesystem::exists(path)) {
+            return path.string();
+        }
+    }
+
     return "";
 }
 
@@ -25,19 +84,30 @@ void play_sound_async(const std::string& sound_name) {
         spdlog::debug("Звуковой файл не найден: {}", sound_name);
         return;
     }
-    
-    // Пробуем разные плееры
-    const char* players[] = {"paplay", "pw-play", "aplay", nullptr};
-    
-    for (const char** player = players; *player; ++player) {
-        std::string cmd = std::string(*player) + " " + sound_file + " &";
-        int result = std::system(cmd.c_str());
-        if (result == 0) {
-            return;
-        }
+
+    std::string player = find_player();
+    if (player.empty()) {
+        return;
     }
-    
-    spdlog::warn("Не удалось воспроизвести звук: {}", sound_name);
+
+    /* Fork для асинхронного воспроизведения */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Дочерний процесс */
+        /* Закрываем stdin/stdout/stderr чтобы не мешать родителю */
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+
+        /* Запускаем плеер */
+        execlp(player.c_str(), player.c_str(), sound_file.c_str(), nullptr);
+
+        /* Если execlp вернулся - ошибка */
+        _exit(1);
+    } else if (pid < 0) {
+        spdlog::warn("Не удалось создать процесс для воспроизведения звука");
+    }
+    /* Родительский процесс продолжает работу, не ждём дочерний */
 }
 
 void play_begin() {
@@ -52,4 +122,4 @@ void play_execute() {
     play_sound_async("execute");
 }
 
-} // namespace nerd_dictation::sounds
+} /* namespace nerd_dictation::sounds */

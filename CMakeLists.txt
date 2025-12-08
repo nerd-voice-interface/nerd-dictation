@@ -282,6 +282,15 @@ install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
     FILES_MATCHING PATTERN "*.hpp"
 )
 
+# Установка звуковых файлов
+if(EXISTS "${CMAKE_SOURCE_DIR}/sounds")
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/sounds/
+        DESTINATION share/nerd-dictation/sounds
+        FILES_MATCHING PATTERN "*.wav"
+    )
+    message(STATUS "Звуки будут установлены в: ${CMAKE_INSTALL_PREFIX}/share/nerd-dictation/sounds/")
+endif()
+
 # ============================================================================
 # Systemd service
 # ============================================================================
