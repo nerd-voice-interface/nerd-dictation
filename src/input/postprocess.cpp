@@ -73,25 +73,32 @@ std::vector<Action> TextPostProcessor::extract_key_actions(const std::string& te
         bool found_key = false;
         
         for (const auto& [word, keys] : sorted_keys) {
-            std::regex pattern("\\b" + std::regex_replace(word, std::regex("([.*+?^${}()|[\\]\\\\])"), "\\$1") + "\\b",
-                             std::regex_constants::icase);
-            std::smatch match;
-            std::string search_str = remaining.substr(pos);
-            
-            if (std::regex_search(search_str, match, pattern)) {
-                // Text before key word - process recursively
-                if (match.position() > 0) {
-                    std::string before = search_str.substr(0, match.position());
-                    auto before_actions = extract_key_actions(before);
-                    actions.insert(actions.end(), before_actions.begin(), before_actions.end());
+            // Use simple string search instead of regex \b (which doesn't work with UTF-8)
+            size_t found = remaining.find(word, pos);
+            if (found != std::string::npos) {
+                // Check if it's a whole word: surrounded by spaces or at string boundaries
+                bool is_word_start = (found == 0) || std::isspace(static_cast<unsigned char>(remaining[found - 1]));
+                bool is_word_end = (found + word.length() == remaining.length()) || 
+                                  std::isspace(static_cast<unsigned char>(remaining[found + word.length()]));
+                
+                if (is_word_start && is_word_end) {
+                    // Text before key word - process recursively
+                    if (found > pos) {
+                        std::string before = remaining.substr(pos, found - pos);
+                        auto before_actions = extract_key_actions(before);
+                        actions.insert(actions.end(), before_actions.begin(), before_actions.end());
+                    }
+                    
+                    // Keys
+                    actions.push_back(KeyAction{keys});
+                    
+                    pos = found + word.length();
+                    found_key = true;
+                    break;
+                } else {
+                    // Not a whole word, continue searching
+                    pos = found + 1;
                 }
-                
-                // Keys
-                actions.push_back(KeyAction{keys});
-                
-                pos += match.position() + match.length();
-                found_key = true;
-                break;
             }
         }
         
@@ -123,7 +130,7 @@ std::vector<Action> TextPostProcessor::extract_key_actions(const std::string& te
 std::string TextPostProcessor::replace_punctuation(const std::string& text) {
     std::string result = text;
     
-    // Sort by length (longer phrases first)
+    // Sort by length (longer phrases first) to match longer phrases first
     std::vector<std::pair<std::string, std::string>> sorted;
     for (const auto& [word, punct] : PUNCTUATION_MAP) {
         sorted.push_back({word, punct});
@@ -132,12 +139,38 @@ std::string TextPostProcessor::replace_punctuation(const std::string& text) {
               [](const auto& a, const auto& b) { return a.first.length() > b.first.length(); });
     
     for (const auto& [word, punct] : sorted) {
-        std::regex pattern("\\b" + std::regex_replace(word, std::regex("([.*+?^${}()|[\\]\\\\])"), "\\$1") + "\\b",
-                          std::regex_constants::icase);
-        result = std::regex_replace(result, pattern, punct);
+        // Simple string replacement: find word surrounded by spaces or at boundaries
+        // This works better with UTF-8 than regex \b
+        size_t pos = 0;
+        while (pos < result.length()) {
+            size_t found = result.find(word, pos);
+            if (found == std::string::npos) {
+                break;
+            }
+            
+            // Check if it's a whole word: surrounded by spaces or at string boundaries
+            bool is_word_start = (found == 0) || std::isspace(static_cast<unsigned char>(result[found - 1]));
+            bool is_word_end = (found + word.length() == result.length()) || 
+                              std::isspace(static_cast<unsigned char>(result[found + word.length()]));
+            
+            if (is_word_start && is_word_end) {
+                // Replace word with punctuation
+                // Remove space before if punctuation shouldn't have space before it
+                bool remove_space_before = (found > 0 && NO_SPACE_BEFORE.count(punct) > 0 && 
+                                           std::isspace(static_cast<unsigned char>(result[found - 1])));
+                
+                size_t replace_start = remove_space_before ? found - 1 : found;
+                size_t replace_length = remove_space_before ? word.length() + 1 : word.length();
+                
+                result.replace(replace_start, replace_length, punct);
+                pos = replace_start + punct.length();
+            } else {
+                pos = found + 1;
+            }
+        }
     }
     
-    // Remove spaces before punctuation marks
+    // Remove spaces before punctuation marks (cleanup pass for any remaining)
     for (const std::string& punct : NO_SPACE_BEFORE) {
         std::string space_punct = " " + punct;
         size_t pos = 0;
@@ -147,6 +180,42 @@ std::string TextPostProcessor::replace_punctuation(const std::string& text) {
         }
     }
     
+    // Special handling for paired punctuation (quotes, parentheses)
+    // Remove spaces inside quotes: « текст » -> «текст»
+    // « is 2 bytes (0xC2 0xAB), » is 2 bytes (0xC2 0xBB)
+    size_t quote_pos = 0;
+    while ((quote_pos = result.find("«", quote_pos)) != std::string::npos) {
+        // Check if there's a space after opening quote
+        if (quote_pos + 2 < result.length() && result[quote_pos + 2] == ' ') {
+            // Remove space after opening quote
+            result.erase(quote_pos + 2, 1);
+        }
+        
+        // Find corresponding closing quote
+        size_t close_quote = result.find("»", quote_pos + 2);
+        if (close_quote != std::string::npos && close_quote > 0 && result[close_quote - 1] == ' ') {
+            // Remove space before closing quote
+            result.erase(close_quote - 1, 1);
+            quote_pos = close_quote;
+        } else {
+            quote_pos += 2; // Move past the opening quote (2 bytes)
+        }
+    }
+    
+    // Remove spaces inside parentheses: ( текст ) -> (текст)
+    size_t paren_pos = 0;
+    while ((paren_pos = result.find("( ", paren_pos)) != std::string::npos) {
+        // Remove space after opening paren
+        result.replace(paren_pos, 2, "(");
+        // Find corresponding closing paren
+        size_t close_paren = result.find(" )", paren_pos);
+        if (close_paren != std::string::npos) {
+            // Remove space before closing paren
+            result.replace(close_paren, 2, ")");
+        }
+        paren_pos += 1; // Move past the paren
+    }
+    
     return result;
 }
 
@@ -154,12 +223,29 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
     // Replace words with punctuation marks
     std::string processed = replace_punctuation(text);
     
-    // Remove extra spaces at edges
-    size_t start = processed.find_first_not_of(" \t\n\r");
-    if (start == std::string::npos) {
+    // Remove extra spaces at edges, but preserve newlines
+    // Find first non-whitespace (but keep newlines)
+    size_t start = 0;
+    while (start < processed.length() && 
+           (processed[start] == ' ' || processed[start] == '\t' || processed[start] == '\r')) {
+        start++;
+    }
+    
+    if (start == processed.length()) {
+        // Only whitespace, but check for newlines
+        if (processed.find('\n') != std::string::npos) {
+            return processed; // Return newlines only
+        }
         return "";
     }
-    size_t end = processed.find_last_not_of(" \t\n\r");
+    
+    // Find last non-whitespace (but keep newlines)
+    size_t end = processed.length() - 1;
+    while (end > start && 
+           (processed[end] == ' ' || processed[end] == '\t' || processed[end] == '\r')) {
+        end--;
+    }
+    
     processed = processed.substr(start, end - start + 1);
     
     if (processed.empty()) {
@@ -218,7 +304,7 @@ std::string TextPostProcessor::apply_capitalization(const std::string& text) {
     
     size_t i = 0;
     while (i < text.length()) {
-        // Check multi-character sequences (emojis and UTF-8)
+        // Check multi-character sequences (emojis and UTF-8 punctuation)
         bool found_multi = false;
         for (const std::string& punct : CAPITALIZE_AFTER) {
             if (text.substr(i, punct.length()) == punct) {
@@ -234,25 +320,82 @@ std::string TextPostProcessor::apply_capitalization(const std::string& text) {
             continue;
         }
         
-        // Process regular characters
-        char c = text[i];
+        // Process UTF-8 characters
+        unsigned char first_byte = static_cast<unsigned char>(text[i]);
         
-        if (std::isalpha(static_cast<unsigned char>(c))) {
-            if (capitalize_next_) {
-                result += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                capitalize_next_ = false;
+        // Check if it's a UTF-8 start byte (not continuation byte)
+        if (first_byte < 0x80) {
+            // ASCII character
+            char c = static_cast<char>(first_byte);
+            
+            if (std::isalpha(static_cast<unsigned char>(c))) {
+                if (capitalize_next_) {
+                    result += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                    capitalize_next_ = false;
+                } else {
+                    result += c;
+                }
             } else {
                 result += c;
+                // Check single-byte characters for capitalization
+                if (c == '.' || c == '!' || c == '?' || c == '\n') {
+                    capitalize_next_ = true;
+                }
+                // Spaces and other whitespace don't reset capitalize_next_
+                // It stays true until we encounter a letter
+            }
+            i++;
+        } else if ((first_byte & 0xE0) == 0xC0) {
+            // 2-byte UTF-8 character (like Cyrillic)
+            if (i + 1 < text.length()) {
+                unsigned char byte1 = static_cast<unsigned char>(text[i]);
+                unsigned char byte2 = static_cast<unsigned char>(text[i + 1]);
+                
+                if (capitalize_next_ && byte1 == 0xD1 && byte2 >= 0x80 && byte2 <= 0x8F) {
+                    // Lowercase Cyrillic р-я (0x80-0x8F) -> Р-Я (0xA0-0xAF)
+                    // р = 0xD1 0x80 -> Р = 0xD0 0xA0
+                    result += static_cast<char>(0xD0);
+                    result += static_cast<char>(byte2 + 0x20);
+                    capitalize_next_ = false;
+                    i += 2;
+                } else if (capitalize_next_ && byte1 == 0xD0 && byte2 >= 0xB0 && byte2 <= 0xBF) {
+                    // Lowercase Cyrillic а-п (0xB0-0xBF) -> А-П (0x90-0x9F)
+                    result += static_cast<char>(0xD0);
+                    result += static_cast<char>(byte2 - 0x20);
+                    capitalize_next_ = false;
+                    i += 2;
+                } else {
+                    // Not a Cyrillic letter or already uppercase, or capitalize_next_ is false
+                    result += text.substr(i, 2);
+                    i += 2;
+                }
+            } else {
+                result += text[i];
+                i++;
+            }
+        } else if ((first_byte & 0xF0) == 0xE0) {
+            // 3-byte UTF-8 character
+            if (i + 2 < text.length()) {
+                result += text.substr(i, 3);
+                i += 3;
+            } else {
+                result += text[i];
+                i++;
+            }
+        } else if ((first_byte & 0xF8) == 0xF0) {
+            // 4-byte UTF-8 character
+            if (i + 3 < text.length()) {
+                result += text.substr(i, 4);
+                i += 4;
+            } else {
+                result += text[i];
+                i++;
             }
         } else {
-            result += c;
-            // Check single-byte characters for capitalization
-            if (c == '.' || c == '!' || c == '?' || c == '\n') {
-                capitalize_next_ = true;
-            }
+            // Invalid UTF-8 or continuation byte, skip
+            result += text[i];
+            i++;
         }
-        
-        i++;
     }
     
     return result;
