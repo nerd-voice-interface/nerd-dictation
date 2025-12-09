@@ -210,7 +210,6 @@ file(MAKE_DIRECTORY ${SOURCE_DIR})
 set(SOURCES
     ${SOURCE_DIR}/main.cpp
     ${SOURCE_DIR}/config/config.cpp
-    ${SOURCE_DIR}/backends/dummy_backend.cpp
     ${SOURCE_DIR}/input/input_simulator.cpp
     ${SOURCE_DIR}/input/postprocess.cpp
     ${SOURCE_DIR}/sounds/sounds.cpp
@@ -221,8 +220,8 @@ set(SOURCES
 set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/types.hpp
     ${INCLUDE_DIR}/nerd_dictation/config.hpp
-    ${INCLUDE_DIR}/nerd_dictation/backends/base.hpp
-    ${INCLUDE_DIR}/nerd_dictation/backends/dummy_backend.hpp
+    ${INCLUDE_DIR}/nerd_dictation/backend_api.h
+    ${INCLUDE_DIR}/nerd_dictation/backend_wrapper.hpp
     ${INCLUDE_DIR}/nerd_dictation/input/input_simulator.hpp
     ${INCLUDE_DIR}/nerd_dictation/input/postprocess.hpp
     ${INCLUDE_DIR}/nerd_dictation/sounds/sounds.hpp
@@ -235,6 +234,29 @@ set(HEADERS
 # ============================================================================
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+
+# ============================================================================
+# Dummy Backend (встроенный тестовый бекенд)
+# ============================================================================
+
+add_library(nerd-dictation-dummy SHARED
+    ${SOURCE_DIR}/backends/dummy_backend.cpp
+)
+
+target_include_directories(nerd-dictation-dummy
+    PRIVATE
+    ${INCLUDE_DIR}
+)
+
+set_target_properties(nerd-dictation-dummy PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    POSITION_INDEPENDENT_CODE ON
+)
+
+install(TARGETS nerd-dictation-dummy
+    LIBRARY DESTINATION lib
+)
 
 # ============================================================================
 # Встраиваемые ресурсы (звуковые файлы)
@@ -449,9 +471,10 @@ else()
 endif()
 message(STATUS "")
 message(STATUS "ASR Backends (loaded via dlopen at runtime):")
+message(STATUS "  - libnerd-dictation-dummy.so   (built-in test backend)")
 message(STATUS "  - libnerd-dictation-t-one.so   (T-one streaming CTC, 8kHz)")
 message(STATUS "  - libnerd-dictation-gigaam.so  (GigaAM v3 offline CTC, 16kHz)")
-message(STATUS "  - Install backends with: sudo pacman -U <package>.pkg.tar.zst")
+message(STATUS "  - Install external backends with: sudo pacman -U <package>.pkg.tar.zst")
 message(STATUS "")
 message(STATUS "============================")
 message(STATUS "")
