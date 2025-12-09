@@ -72,13 +72,6 @@ nerd-dictation/
 └── tests/                  # Тесты (опционально)
 ```
 
-## Документация
-
-- [CPP_MIGRATION_PLAN.md](CPP_MIGRATION_PLAN.md) — Детальный план миграции
-- [CPP_DEPENDENCIES.md](CPP_DEPENDENCIES.md) — Подробности по зависимостям
-- [CPP_MIGRATION_SUMMARY_RU.md](CPP_MIGRATION_SUMMARY_RU.md) — Краткая сводка
-- [CPP_CODE_EXAMPLES.md](CPP_CODE_EXAMPLES.md) — Примеры кода
-
 ## Зависимости
 
 ### Системные (через pkg-config)
