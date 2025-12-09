@@ -71,6 +71,22 @@ else()
     message(WARNING "PulseAudio Simple API not found, sound notifications will be disabled")
 endif()
 
+# WebRTC Audio Processing (для AGC и шумоподавления)
+pkg_check_modules(WEBRTC_APM REQUIRED webrtc-audio-processing-1)
+if(WEBRTC_APM_FOUND)
+    message(STATUS "WebRTC Audio Processing found: ${WEBRTC_APM_VERSION}")
+else()
+    message(FATAL_ERROR "WebRTC Audio Processing not found. Install: sudo pacman -S webrtc-audio-processing-1")
+endif()
+
+# libsamplerate (для ресемплинга аудио)
+pkg_check_modules(SAMPLERATE REQUIRED samplerate)
+if(SAMPLERATE_FOUND)
+    message(STATUS "libsamplerate found: ${SAMPLERATE_VERSION}")
+else()
+    message(FATAL_ERROR "libsamplerate not found. Install: sudo pacman -S libsamplerate")
+endif()
+
 # ============================================================================
 # Git Submodules из ThirdParty
 # ============================================================================
@@ -199,6 +215,7 @@ set(SOURCES
     ${SOURCE_DIR}/input/postprocess.cpp
     ${SOURCE_DIR}/sounds/sounds.cpp
     ${SOURCE_DIR}/daemon/daemon.cpp
+    ${SOURCE_DIR}/audio/audio_preprocessor.cpp
 )
 
 set(HEADERS
@@ -210,6 +227,7 @@ set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/input/postprocess.hpp
     ${INCLUDE_DIR}/nerd_dictation/sounds/sounds.hpp
     ${INCLUDE_DIR}/nerd_dictation/daemon/daemon.hpp
+    ${INCLUDE_DIR}/nerd_dictation/audio/audio_preprocessor.hpp
 )
 
 # ============================================================================
@@ -243,6 +261,8 @@ target_include_directories(${PROJECT_NAME}
     ${SOURCE_DIR}
     ${PIPEWIRE_INCLUDE_DIRS}
     ${PULSE_INCLUDE_DIRS}
+    ${WEBRTC_APM_INCLUDE_DIRS}
+    ${SAMPLERATE_INCLUDE_DIRS}
 )
 
 # TOML11 (header-only)
@@ -274,6 +294,13 @@ if(PULSE_SIMPLE_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${PULSE_SIMPLE_LIBRARIES})
     target_include_directories(${PROJECT_NAME} PRIVATE ${PULSE_SIMPLE_INCLUDE_DIRS})
 endif()
+
+# WebRTC Audio Processing (для AGC и шумоподавления)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${WEBRTC_APM_LIBRARIES})
+target_compile_options(${PROJECT_NAME} PRIVATE ${WEBRTC_APM_CFLAGS_OTHER})
+
+# libsamplerate (для ресемплинга)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${SAMPLERATE_LIBRARIES})
 
 # spdlog
 if(SPDLOG_FOUND)

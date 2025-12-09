@@ -2,6 +2,7 @@
 
 #include "nerd_dictation/config.hpp"
 #include "nerd_dictation/backend_wrapper.hpp"
+#include "nerd_dictation/audio/audio_preprocessor.hpp"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -71,6 +72,10 @@ private:
     /* Процесс захвата аудио */
     int audio_proc_pid_ = -1;
     FILE* audio_proc_pipe_ = nullptr;
+
+    /* Аудио препроцессинг (AGC + шумоподавление) */
+    std::unique_ptr<audio::AudioPreprocessor> audio_preprocessor_;
+    std::vector<int16_t> preprocessed_buffer_;
 
     /* Wake word detection (требует Vosk) */
     bool wake_word_enabled_ = true;

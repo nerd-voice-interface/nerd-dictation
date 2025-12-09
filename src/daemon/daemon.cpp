@@ -115,6 +115,20 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
         throw;
     }
 
+    /* Initialize audio preprocessor (AGC + noise suppression) */
+    audio_preprocessor_ = std::make_unique<audio::AudioPreprocessor>();
+    audio::AudioPreprocessor::Config preproc_config;
+    preproc_config.input_sample_rate = backend_->sample_rate();
+    preproc_config.process_sample_rate = 16000;  /* WebRTC minimum */
+    preproc_config.noise_suppression_level = 2;  /* High */
+    preproc_config.agc_enabled = true;
+    preproc_config.high_pass_filter_enabled = true;
+
+    if (!audio_preprocessor_->initialize(preproc_config)) {
+        spdlog::warn("Аудио препроцессор не инициализирован, продолжаем без обработки");
+        audio_preprocessor_.reset();
+    }
+
     spdlog::info("Daemon инициализирован, socket: {}", socket_path_);
 }
 
@@ -473,6 +487,7 @@ void DictationDaemon::audio_listener_loop() {
             }
 
             std::vector<int16_t> chunk(chunk_size / sizeof(int16_t));
+            preprocessed_buffer_.resize(chunk_size / sizeof(int16_t));
 
             while (running_) {
                 size_t bytes_read = fread(chunk.data(), 1, chunk_size, audio_proc_pipe_);
@@ -481,14 +496,28 @@ void DictationDaemon::audio_listener_loop() {
                     break; /* EOF */
                 }
 
-                if (bytes_read < chunk_size) {
-                    chunk.resize(bytes_read / sizeof(int16_t));
+                size_t num_samples = bytes_read / sizeof(int16_t);
+                if (num_samples < chunk.size()) {
+                    chunk.resize(num_samples);
+                }
+
+                /* Apply audio preprocessing (AGC + noise suppression) */
+                std::vector<int16_t>* audio_to_use = &chunk;
+                if (audio_preprocessor_ && audio_preprocessor_->is_initialized()) {
+                    preprocessed_buffer_.resize(num_samples);
+                    int processed = audio_preprocessor_->process(
+                        chunk.data(), num_samples, preprocessed_buffer_.data()
+                    );
+                    if (processed > 0) {
+                        preprocessed_buffer_.resize(static_cast<size_t>(processed));
+                        audio_to_use = &preprocessed_buffer_;
+                    }
                 }
 
                 /* Add to ring buffer for dictation */
                 {
                     std::lock_guard<std::mutex> lock(audio_buffer_mutex_);
-                    audio_buffer_.push_back(chunk);
+                    audio_buffer_.push_back(*audio_to_use);
                     if (audio_buffer_.size() > audio_buffer_max_chunks_) {
                         audio_buffer_.pop_front();
                     }
@@ -497,7 +526,7 @@ void DictationDaemon::audio_listener_loop() {
                 /* Copy to wake word queue (if not listening) */
                 if (wake_word_running_ && state_ != DaemonState::Listening) {
                     std::lock_guard<std::mutex> lock(wake_word_queue_mutex_);
-                    wake_word_queue_.push(chunk);
+                    wake_word_queue_.push(*audio_to_use);
                 }
             }
 
