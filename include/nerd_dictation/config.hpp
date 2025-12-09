@@ -20,13 +20,16 @@ struct WakeWordConfig {
 
 struct Config {
     std::string backend = "dummy";
-    std::string input_method = "xdotool";  // По умолчанию xdotool, как в оригинале
+    std::string input_method = "xdotool";  /* По умолчанию xdotool, как в оригинале */
     AudioConfig audio;
-    
-    // Путь к модели (для реальных бэкендов)
+
+    /* Путь к .so библиотеке бекенда (если пусто - используется стандартный путь) */
+    std::string backend_library;
+
+    /* Путь к модели (для бекендов, загружающих модель из файла) */
     std::string model_path;
-    
-    // Wake word detection
+
+    /* Wake word detection */
     WakeWordConfig wake_word;
 };
 
