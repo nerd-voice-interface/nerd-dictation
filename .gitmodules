@@ -16,3 +16,6 @@
 [submodule "backends/vosk/ThirdParty/sherpa-onnx"]
 	path = backends/vosk/ThirdParty/sherpa-onnx
 	url = https://github.com/k2-fsa/sherpa-onnx.git
+[submodule "ThirdParty/res_embed"]
+	path = ThirdParty/res_embed
+	url = https://github.com/dmikushin/res_embed.git

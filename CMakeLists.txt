@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(nerd-dictation 
-    VERSION 1.0.0 
+project(nerd-dictation
+    VERSION 1.0.0
     DESCRIPTION "Расширенная диктовка для Linux с подключаемыми бэкендами ASR"
-    LANGUAGES CXX
+    LANGUAGES ASM C CXX
 )
 
 # ============================================================================
@@ -165,6 +165,17 @@ else()
     endif()
 endif()
 
+# res_embed (для встраивания звуковых файлов)
+if(EXISTS "${THIRDPARTY_DIR}/res_embed")
+    message(STATUS "Using res_embed from ThirdParty submodule")
+    add_subdirectory(${THIRDPARTY_DIR}/res_embed)
+    set(RES_EMBED_FOUND TRUE)
+else()
+    message(FATAL_ERROR "res_embed not found. Initialize submodule:")
+    message(FATAL_ERROR "  git submodule add https://github.com/dmikushin/res_embed.git ThirdParty/res_embed")
+    message(FATAL_ERROR "  git submodule update --init --recursive")
+endif()
+
 # ============================================================================
 # Структура проекта
 # ============================================================================
@@ -206,6 +217,21 @@ set(HEADERS
 # ============================================================================
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+
+# ============================================================================
+# Встраиваемые ресурсы (звуковые файлы)
+# ============================================================================
+
+if(RES_EMBED_FOUND)
+    res_embed(TARGET ${PROJECT_NAME} NAME "sound_begin" PATH ${CMAKE_SOURCE_DIR}/sounds/begin.wav KEYWORD)
+    res_embed(TARGET ${PROJECT_NAME} NAME "sound_end" PATH ${CMAKE_SOURCE_DIR}/sounds/end.wav KEYWORD)
+    res_embed(TARGET ${PROJECT_NAME} NAME "sound_execute" PATH ${CMAKE_SOURCE_DIR}/sounds/execute.wav KEYWORD)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EMBEDDED_SOUNDS=1)
+    message(STATUS "Sound files will be embedded into binary")
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EMBEDDED_SOUNDS=0)
+    message(STATUS "Sound files will be loaded from filesystem")
+endif()
 
 # ============================================================================
 # Include директории
@@ -282,14 +308,8 @@ install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
     FILES_MATCHING PATTERN "*.hpp"
 )
 
-# Установка звуковых файлов
-if(EXISTS "${CMAKE_SOURCE_DIR}/sounds")
-    install(DIRECTORY ${CMAKE_SOURCE_DIR}/sounds/
-        DESTINATION share/nerd-dictation/sounds
-        FILES_MATCHING PATTERN "*.wav"
-    )
-    message(STATUS "Звуки будут установлены в: ${CMAKE_INSTALL_PREFIX}/share/nerd-dictation/sounds/")
-endif()
+# Звуковые файлы встроены в бинарник через res_embed
+# (установка отдельных файлов не требуется)
 
 # ============================================================================
 # Systemd service
@@ -392,6 +412,7 @@ message(STATUS "  TOML11: ${TOML11_FOUND}")
 message(STATUS "  spdlog: ${SPDLOG_FOUND}")
 message(STATUS "  CLI11: ${CLI11_FOUND}")
 message(STATUS "  Eigen: ${EIGEN_FOUND}")
+message(STATUS "  res_embed: ${RES_EMBED_FOUND} (embedded sounds)")
 message(STATUS "")
 message(STATUS "Wake Word Detection:")
 if(VOSK_LIBRARY)

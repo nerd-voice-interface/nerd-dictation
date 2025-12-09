@@ -5,6 +5,10 @@
 #include <fstream>
 #include <cstring>
 
+#if HAVE_EMBEDDED_SOUNDS
+#include <res_embed.h>
+#endif
+
 #ifdef HAVE_PULSEAUDIO
 #include <pulse/simple.h>
 #include <pulse/error.h>
@@ -103,6 +107,78 @@ WavData load_wav(const std::string& path) {
     return result;
 }
 
+WavData load_wav_from_memory(const char* data, size_t size) {
+    WavData result;
+
+    if (!data || size < sizeof(WavHeader)) {
+        return result;
+    }
+
+    /* Read header */
+    const WavHeader* header = reinterpret_cast<const WavHeader*>(data);
+
+    if (std::strncmp(header->riff, "RIFF", 4) != 0 ||
+        std::strncmp(header->wave, "WAVE", 4) != 0) {
+        spdlog::warn("Неверный формат WAV в памяти");
+        return result;
+    }
+
+    if (header->audio_format != 1) {
+        spdlog::warn("Поддерживается только PCM WAV");
+        return result;
+    }
+
+    result.sample_rate = header->sample_rate;
+    result.channels = header->num_channels;
+    result.bits_per_sample = header->bits_per_sample;
+
+    /* Find data chunk */
+    size_t offset = sizeof(WavHeader);
+    if (header->fmt_size > 16) {
+        offset += header->fmt_size - 16;
+    }
+
+    while (offset + 8 <= size) {
+        const char* chunk_id = data + offset;
+        uint32_t chunk_size;
+        std::memcpy(&chunk_size, data + offset + 4, sizeof(chunk_size));
+
+        if (std::strncmp(chunk_id, "data", 4) == 0) {
+            /* Found data chunk */
+            size_t data_offset = offset + 8;
+            if (data_offset + chunk_size > size) {
+                chunk_size = size - data_offset;
+            }
+
+            size_t num_samples = chunk_size / (header->bits_per_sample / 8);
+            result.samples.resize(num_samples);
+
+            if (header->bits_per_sample == 16) {
+                std::memcpy(result.samples.data(), data + data_offset,
+                           num_samples * sizeof(int16_t));
+            } else if (header->bits_per_sample == 8) {
+                const uint8_t* src = reinterpret_cast<const uint8_t*>(data + data_offset);
+                for (size_t i = 0; i < num_samples; ++i) {
+                    result.samples[i] = (static_cast<int16_t>(src[i]) - 128) * 256;
+                }
+            } else {
+                spdlog::warn("Неподдерживаемая битность: {} бит", header->bits_per_sample);
+                result.samples.clear();
+            }
+            break;
+        } else {
+            offset += 8 + chunk_size;
+        }
+    }
+
+    if (result.valid()) {
+        spdlog::debug("Загружен WAV из памяти ({} Hz, {} ch, {} samples)",
+                     result.sample_rate, result.channels, result.samples.size());
+    }
+
+    return result;
+}
+
 /* ========================================================================== */
 /* File Search                                                                 */
 /* ========================================================================== */
@@ -166,7 +242,35 @@ bool SoundPlayer::init() {
         return true;
     }
 
-    /* Load default sounds */
+#if HAVE_EMBEDDED_SOUNDS
+    /* Load sounds from embedded resources */
+    struct EmbeddedSound {
+        const char* name;
+        const char* resource_name;
+    };
+    static const EmbeddedSound embedded_sounds[] = {
+        {"begin", "sound_begin"},
+        {"end", "sound_end"},
+        {"execute", "sound_execute"},
+    };
+
+    for (const auto& sound : embedded_sounds) {
+        size_t size = 0;
+        const char* data = res::embed::get(sound.resource_name, &size);
+        if (data && size > 0) {
+            WavData wav = load_wav_from_memory(data, size);
+            if (wav.valid()) {
+                std::lock_guard<std::mutex> lock(sounds_mutex_);
+                sounds_[sound.name] = std::move(wav);
+                spdlog::debug("Загружен встроенный звук: {}", sound.name);
+            }
+        } else {
+            spdlog::warn("Встроенный звук не найден: {}", sound.resource_name);
+        }
+    }
+    spdlog::info("Звуковая подсистема инициализирована (встроенные ресурсы)");
+#else
+    /* Load default sounds from filesystem */
     const char* sound_names[] = {"begin", "end", "execute"};
     for (const char* name : sound_names) {
         std::string path = find_sound_file(name);
@@ -174,9 +278,10 @@ bool SoundPlayer::init() {
             load_sound(name, path);
         }
     }
+    spdlog::info("Звуковая подсистема инициализирована");
+#endif
 
     initialized_ = true;
-    spdlog::info("Звуковая подсистема инициализирована");
     return true;
 }
 
