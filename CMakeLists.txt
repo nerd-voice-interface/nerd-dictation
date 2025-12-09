@@ -460,6 +460,18 @@ endif()
 
 if(ENABLE_TESTS)
     enable_testing()
+    
+    # GoogleTest submodule
+    if(EXISTS "${THIRDPARTY_DIR}/googletest")
+        message(STATUS "Using GoogleTest from ThirdParty submodule")
+        add_subdirectory(${THIRDPARTY_DIR}/googletest)
+        set(GTEST_FOUND TRUE)
+    else()
+        message(FATAL_ERROR "GoogleTest not found. Initialize submodule:")
+        message(FATAL_ERROR "  git submodule add https://github.com/google/googletest.git ThirdParty/googletest")
+        message(FATAL_ERROR "  git submodule update --init --recursive")
+    endif()
+    
     add_subdirectory(tests)
 endif()
 

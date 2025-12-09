@@ -41,3 +41,5 @@ Thumbs.db
 
 # ThirdParty (submodules будут отслеживаться)
 # ThirdParty/*
+__pycache__/
+*.pyc
