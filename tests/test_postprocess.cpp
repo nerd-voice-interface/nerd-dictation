@@ -381,3 +381,131 @@ TEST_F(PostProcessTest, FragmentSpacingNoSpaceBeforePunctuationWithTrailingSpace
     // Should not have space before punctuation (trailing space from first fragment should be ignored)
     EXPECT_EQ(text_action2.text, ". Мир");
 }
+
+// Test punctuation spacing rules
+TEST_F(PostProcessTest, PunctuationNoSpaceBefore) {
+    // Test that punctuation has no space before it
+    auto actions = processor_.process("текст точка продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Текст. Продолжение" (no space before period, space after, capitalized after period)
+    EXPECT_EQ(text_action.text, "Текст. Продолжение");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfter) {
+    // Test that punctuation has space after it (except opening brackets/quotes)
+    auto actions = processor_.process("текст точка продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Текст. Продолжение" (space after period, capitalized after period)
+    EXPECT_EQ(text_action.text, "Текст. Продолжение");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfterComma) {
+    auto actions = processor_.process("первый запятая второй");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Первый, второй" (space after comma)
+    EXPECT_EQ(text_action.text, "Первый, второй");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfterColon) {
+    auto actions = processor_.process("список двоеточие первый");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Список: первый" (space after colon)
+    EXPECT_EQ(text_action.text, "Список: первый");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfterExclamation) {
+    auto actions = processor_.process("текст восклицательный знак продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Текст! Продолжение" (space after exclamation, capitalized after !)
+    EXPECT_EQ(text_action.text, "Текст! Продолжение");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfterQuestion) {
+    auto actions = processor_.process("вопрос вопросительный знак ответ");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Вопрос? Ответ" (space after question mark, capitalized after ?)
+    EXPECT_EQ(text_action.text, "Вопрос? Ответ");
+}
+
+TEST_F(PostProcessTest, PunctuationNoSpaceAfterOpeningBracket) {
+    auto actions = processor_.process("открыть скобку текст закрыть скобку");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "(Текст)" (no space after opening bracket)
+    EXPECT_EQ(text_action.text, "(Текст)");
+}
+
+TEST_F(PostProcessTest, PunctuationNoSpaceAfterOpeningQuote) {
+    auto actions = processor_.process("открыть кавычки текст закрыть кавычки");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "«Текст»" (no space after opening quote)
+    EXPECT_EQ(text_action.text, "«Текст»");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfterClosingBracket) {
+    auto actions = processor_.process("открыть скобку текст закрыть скобку продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "(Текст) продолжение" (space after closing bracket)
+    EXPECT_EQ(text_action.text, "(Текст) продолжение");
+}
+
+TEST_F(PostProcessTest, PunctuationSpaceAfterClosingQuote) {
+    auto actions = processor_.process("открыть кавычки текст закрыть кавычки продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "«Текст» продолжение" (space after closing quote)
+    EXPECT_EQ(text_action.text, "«Текст» продолжение");
+}
+
+TEST_F(PostProcessTest, PunctuationNoSpaceBeforeMultiple) {
+    // Test that there's no space before punctuation marks
+    // Check with comma
+    auto actions1 = processor_.process("текст запятая продолжение");
+    ASSERT_EQ(actions1.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions1[0]));
+    auto text_action1 = std::get<TextAction>(actions1[0]);
+    size_t comma_pos = text_action1.text.find(',');
+    ASSERT_NE(comma_pos, std::string::npos) << "Comma not found in: " << text_action1.text;
+    if (comma_pos > 0) {
+        EXPECT_NE(text_action1.text[comma_pos - 1], ' ') << "Space before comma found in: " << text_action1.text;
+    }
+    
+    // Check with period
+    auto actions2 = processor_.process("текст точка продолжение");
+    ASSERT_EQ(actions2.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions2[0]));
+    auto text_action2 = std::get<TextAction>(actions2[0]);
+    size_t period_pos = text_action2.text.find('.');
+    ASSERT_NE(period_pos, std::string::npos) << "Period not found in: " << text_action2.text;
+    if (period_pos > 0) {
+        EXPECT_NE(text_action2.text[period_pos - 1], ' ') << "Space before period found in: " << text_action2.text;
+    }
+}
+
+TEST_F(PostProcessTest, PunctuationNoSpaceBeforeWithMultipleSpaces) {
+    // Test that multiple spaces before punctuation are removed
+    auto actions = processor_.process("текст    точка    продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Should be "Текст. Продолжение" (no space before period, single space after, capitalized after period)
+    EXPECT_EQ(text_action.text, "Текст. Продолжение");
+}
