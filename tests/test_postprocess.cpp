@@ -260,3 +260,124 @@ TEST_F(PostProcessTest, Reset) {
     auto text_action = std::get<TextAction>(actions[0]);
     EXPECT_EQ(text_action.text, "Мир"); // Capitalized because it's the start
 }
+
+// Test multiple spaces suppression
+TEST_F(PostProcessTest, MultipleSpacesSuppression) {
+    // Simulate recognition with multiple spaces
+    auto actions = processor_.process("привет    мир");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Multiple spaces should be normalized to single space
+    EXPECT_EQ(text_action.text, "Привет мир");
+}
+
+TEST_F(PostProcessTest, MultipleSpacesWithPunctuation) {
+    auto actions = processor_.process("привет    точка    мир");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Multiple spaces should be normalized, but space before punctuation should be removed
+    EXPECT_EQ(text_action.text, "Привет. Мир");
+}
+
+TEST_F(PostProcessTest, MultipleSpacesAtStart) {
+    auto actions = processor_.process("   привет мир");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Leading spaces should be removed
+    EXPECT_EQ(text_action.text, "Привет мир");
+}
+
+TEST_F(PostProcessTest, MultipleSpacesAtEnd) {
+    auto actions = processor_.process("привет мир   ");
+    ASSERT_EQ(actions.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    auto text_action = std::get<TextAction>(actions[0]);
+    // Trailing spaces should be removed
+    EXPECT_EQ(text_action.text, "Привет мир");
+}
+
+// Test fragment spacing - fragments should be separated by single space
+TEST_F(PostProcessTest, FragmentSpacingNoTrailingSpace) {
+    // Process first fragment
+    auto actions1 = processor_.process("привет");
+    ASSERT_EQ(actions1.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions1[0]));
+    auto text_action1 = std::get<TextAction>(actions1[0]);
+    EXPECT_EQ(text_action1.text, "Привет");
+    
+    // Process second fragment (should have space before it)
+    auto actions2 = processor_.process("мир");
+    ASSERT_EQ(actions2.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions2[0]));
+    auto text_action2 = std::get<TextAction>(actions2[0]);
+    // Should have space before second fragment
+    EXPECT_EQ(text_action2.text, " мир");
+}
+
+TEST_F(PostProcessTest, FragmentSpacingWithTrailingSpace) {
+    // Process first fragment with trailing space
+    auto actions1 = processor_.process("привет ");
+    ASSERT_EQ(actions1.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions1[0]));
+    auto text_action1 = std::get<TextAction>(actions1[0]);
+    // Trailing space should be removed
+    EXPECT_EQ(text_action1.text, "Привет");
+    
+    // Process second fragment (should have space before it, but not double)
+    auto actions2 = processor_.process("мир");
+    ASSERT_EQ(actions2.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions2[0]));
+    auto text_action2 = std::get<TextAction>(actions2[0]);
+    // Should have single space before second fragment (not double)
+    EXPECT_EQ(text_action2.text, " мир");
+}
+
+TEST_F(PostProcessTest, FragmentSpacingMultipleTrailingSpaces) {
+    // Process first fragment with multiple trailing spaces
+    auto actions1 = processor_.process("привет   ");
+    ASSERT_EQ(actions1.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions1[0]));
+    auto text_action1 = std::get<TextAction>(actions1[0]);
+    // Multiple trailing spaces should be removed
+    EXPECT_EQ(text_action1.text, "Привет");
+    
+    // Process second fragment
+    auto actions2 = processor_.process("мир");
+    ASSERT_EQ(actions2.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions2[0]));
+    auto text_action2 = std::get<TextAction>(actions2[0]);
+    // Should have single space (not multiple)
+    EXPECT_EQ(text_action2.text, " мир");
+}
+
+TEST_F(PostProcessTest, FragmentSpacingNoSpaceBeforePunctuation) {
+    // Process first fragment
+    auto actions1 = processor_.process("привет");
+    ASSERT_EQ(actions1.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions1[0]));
+    
+    // Process second fragment starting with punctuation
+    auto actions2 = processor_.process("точка мир");
+    ASSERT_EQ(actions2.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions2[0]));
+    auto text_action2 = std::get<TextAction>(actions2[0]);
+    // Should not have space before punctuation
+    EXPECT_EQ(text_action2.text, ". Мир");
+}
+
+TEST_F(PostProcessTest, FragmentSpacingNoSpaceBeforePunctuationWithTrailingSpace) {
+    // Process first fragment with trailing space
+    auto actions1 = processor_.process("привет ");
+    ASSERT_EQ(actions1.size(), 1);
+    
+    // Process second fragment starting with punctuation
+    auto actions2 = processor_.process("точка мир");
+    ASSERT_EQ(actions2.size(), 1);
+    EXPECT_TRUE(std::holds_alternative<TextAction>(actions2[0]));
+    auto text_action2 = std::get<TextAction>(actions2[0]);
+    // Should not have space before punctuation (trailing space from first fragment should be ignored)
+    EXPECT_EQ(text_action2.text, ". Мир");
+}

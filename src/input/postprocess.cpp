@@ -219,9 +219,43 @@ std::string TextPostProcessor::replace_punctuation(const std::string& text) {
     return result;
 }
 
+std::string TextPostProcessor::normalize_spaces(const std::string& text) {
+    if (text.empty()) {
+        return text;
+    }
+    
+    std::string result;
+    result.reserve(text.length());
+    
+    bool in_space = false;
+    for (size_t i = 0; i < text.length(); ++i) {
+        char c = text[i];
+        
+        // Check if it's a space character (but not newline)
+        if (c == ' ' || c == '\t' || c == '\r') {
+            if (!in_space) {
+                result += ' '; // Add single space
+                in_space = true;
+            }
+            // Skip additional spaces
+        } else {
+            in_space = false;
+            result += c;
+        }
+    }
+    
+    return result;
+}
+
 std::string TextPostProcessor::process_text_fragment(const std::string& text) {
+    // Normalize multiple spaces to single spaces first
+    std::string normalized = normalize_spaces(text);
+    
     // Replace words with punctuation marks
-    std::string processed = replace_punctuation(text);
+    std::string processed = replace_punctuation(normalized);
+    
+    // Normalize spaces again after punctuation replacement (in case replacement created issues)
+    processed = normalize_spaces(processed);
     
     // Remove extra spaces at edges, but preserve newlines
     // Find first non-whitespace (but keep newlines)
@@ -250,6 +284,18 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
     
     if (processed.empty()) {
         return "";
+    }
+    
+    // Check if fragment ends with space
+    bool ends_with_space = (!processed.empty() && 
+                            (processed.back() == ' ' || processed.back() == '\t' || processed.back() == '\r'));
+    
+    // Remove trailing space from fragment (it will be handled by pending_space_)
+    if (ends_with_space) {
+        while (!processed.empty() && 
+               (processed.back() == ' ' || processed.back() == '\t' || processed.back() == '\r')) {
+            processed.pop_back();
+        }
     }
     
     // Add buffered space from previous fragment (as in original)
@@ -285,8 +331,33 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
         }
     }
     
-    // Buffer space for next fragment
-    pending_space_ = true;
+    // Buffer space for next fragment if current fragment doesn't end with punctuation
+    // Check if fragment ends with punctuation that doesn't need space after
+    bool ends_with_punct = false;
+    if (!processed.empty()) {
+        // Check multi-character punctuation
+        for (const std::string& punct : NO_SPACE_BEFORE) {
+            if (processed.length() >= punct.length() && 
+                processed.substr(processed.length() - punct.length()) == punct) {
+                ends_with_punct = true;
+                break;
+            }
+        }
+        
+        // Check single-byte punctuation
+        if (!ends_with_punct && !processed.empty()) {
+            char last_char = processed.back();
+            if (last_char == '.' || last_char == ',' || last_char == ':' || 
+                last_char == '!' || last_char == '?' || last_char == '-' || 
+                last_char == '»' || last_char == ')' || last_char == '\n') {
+                ends_with_punct = true;
+            }
+        }
+    }
+    
+    // Set pending_space_ only if fragment doesn't end with punctuation
+    // and doesn't end with space (which we already removed)
+    pending_space_ = !ends_with_punct && !ends_with_space;
     
     // Capitalize
     processed = apply_capitalization(processed);
