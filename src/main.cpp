@@ -1,6 +1,5 @@
 #include "nerd_dictation/config.hpp"
 #include "nerd_dictation/daemon/daemon.hpp"
-#include "nerd_dictation/backends/dummy_backend.hpp"
 #include "nerd_dictation/input/input_simulator.hpp"
 #include "nerd_dictation/input/postprocess.hpp"
 #include "nerd_dictation/sounds/sounds.hpp"
@@ -13,6 +12,53 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <csignal>
+#include <execinfo.h>
+#include <cstdlib>
+
+/* ============================================================================
+ * Crash handler with backtrace
+ * ============================================================================ */
+
+static void crash_handler(int sig) {
+    const char* sig_name = (sig == SIGSEGV) ? "SIGSEGV" :
+                           (sig == SIGABRT) ? "SIGABRT" :
+                           (sig == SIGFPE)  ? "SIGFPE" : "UNKNOWN";
+
+    // Print header
+    const char header[] = "\n[nerd-dictation] FATAL: Caught signal ";
+    write(STDERR_FILENO, header, sizeof(header) - 1);
+    write(STDERR_FILENO, sig_name, strlen(sig_name));
+    write(STDERR_FILENO, "\n", 1);
+
+    // Get backtrace
+    void* bt_buffer[64];
+    int bt_size = backtrace(bt_buffer, 64);
+
+    const char bt_header[] = "[nerd-dictation] Backtrace:\n";
+    write(STDERR_FILENO, bt_header, sizeof(bt_header) - 1);
+
+    // Print backtrace to stderr
+    backtrace_symbols_fd(bt_buffer, bt_size, STDERR_FILENO);
+
+    const char footer[] = "[nerd-dictation] End of backtrace\n";
+    write(STDERR_FILENO, footer, sizeof(footer) - 1);
+
+    // Re-raise the signal to get core dump
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void install_crash_handler() {
+    struct sigaction sa;
+    sa.sa_handler = crash_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;  // Only handle once, then use default
+
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGABRT, &sa, nullptr);
+    sigaction(SIGFPE, &sa, nullptr);
+}
 
 namespace {
 // Простой JSON клиент для daemon
@@ -72,6 +118,9 @@ bool is_daemon_running() {
 }
 
 int main(int argc, char* argv[]) {
+    // Install crash handler for better debugging
+    install_crash_handler();
+
     // Настройка логирования
     auto logger = spdlog::stderr_color_mt("nerd-dictation");
     spdlog::set_default_logger(logger);
