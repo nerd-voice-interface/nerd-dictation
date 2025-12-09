@@ -192,6 +192,17 @@ else()
     message(FATAL_ERROR "  git submodule update --init --recursive")
 endif()
 
+# nerd-dictation-api (Backend C API)
+if(EXISTS "${THIRDPARTY_DIR}/nerd-dictation-api")
+    message(STATUS "Using nerd-dictation-api from ThirdParty submodule")
+    set(NERD_DICTATION_API_INCLUDE "${THIRDPARTY_DIR}/nerd-dictation-api/include")
+    set(NERD_DICTATION_API_FOUND TRUE)
+else()
+    message(FATAL_ERROR "nerd-dictation-api not found. Initialize submodule:")
+    message(FATAL_ERROR "  git submodule add https://github.com/nerd-voice-interface/nerd-dictation-api.git ThirdParty/nerd-dictation-api")
+    message(FATAL_ERROR "  git submodule update --init --recursive")
+endif()
+
 # ============================================================================
 # Структура проекта
 # ============================================================================
@@ -220,7 +231,6 @@ set(SOURCES
 set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/types.hpp
     ${INCLUDE_DIR}/nerd_dictation/config.hpp
-    ${INCLUDE_DIR}/nerd_dictation/backend_api.h
     ${INCLUDE_DIR}/nerd_dictation/backend_wrapper.hpp
     ${INCLUDE_DIR}/nerd_dictation/input/input_simulator.hpp
     ${INCLUDE_DIR}/nerd_dictation/input/postprocess.hpp
@@ -247,6 +257,11 @@ target_include_directories(nerd-dictation-dummy
     PRIVATE
     ${INCLUDE_DIR}
 )
+
+# nerd-dictation-api для dummy backend
+if(NERD_DICTATION_API_FOUND)
+    target_include_directories(nerd-dictation-dummy PRIVATE ${NERD_DICTATION_API_INCLUDE})
+endif()
 
 set_target_properties(nerd-dictation-dummy PROPERTIES
     VERSION ${PROJECT_VERSION}
@@ -295,6 +310,11 @@ endif()
 # CLI11 (header-only)
 if(CLI11_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${CLI11_INCLUDE})
+endif()
+
+# nerd-dictation-api (header-only)
+if(NERD_DICTATION_API_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${NERD_DICTATION_API_INCLUDE})
 endif()
 
 # ============================================================================
