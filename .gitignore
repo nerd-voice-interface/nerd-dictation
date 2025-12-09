@@ -1,6 +1,7 @@
 # Build directories
 build/
 install/
+test-samples/
 _build/
 cmake-build-*/
 
