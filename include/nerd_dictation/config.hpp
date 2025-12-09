@@ -14,19 +14,19 @@ struct AudioConfig {
 
 struct WakeWordConfig {
     bool enabled = true;
-    std::string word = "запись";  // Wake word по умолчанию
+    std::string word = "запись";  // Default wake word (Russian)
     std::string model_path = "~/.local/share/vosk/vosk-model-small-ru";
 };
 
 struct Config {
     std::string backend = "dummy";
-    std::string input_method = "xdotool";  /* По умолчанию xdotool, как в оригинале */
+    std::string input_method = "xdotool";  /* Default xdotool, as in original */
     AudioConfig audio;
 
-    /* Путь к .so библиотеке бекенда (если пусто - используется стандартный путь) */
+    /* Path to backend .so library (if empty - standard path is used) */
     std::string backend_library;
 
-    /* Путь к модели (для бекендов, загружающих модель из файла) */
+    /* Path to model (for backends loading model from file) */
     std::string model_path;
 
     /* Wake word detection */
@@ -34,13 +34,13 @@ struct Config {
 };
 
 /**
- * Загрузить конфигурацию из TOML файла
+ * Load configuration from TOML file
  */
 Config load_config(const std::filesystem::path& config_path);
 
 /**
- * Найти конфигурационный файл
- * Проверяет: ~/.config/nerd-dictation/config.toml, затем default.toml
+ * Find configuration file
+ * Checks: ~/.config/nerd-dictation/config.toml, then default.toml
  */
 std::optional<std::filesystem::path> find_config_file();
 

@@ -1,46 +1,47 @@
 # nerd-dictation (C++)
 
-C++ реализация системы диктовки речи для Linux с модульной архитектурой и подключаемыми бэкендами распознавания речи.
+C++ implementation of a speech dictation system for Linux with modular architecture and pluggable speech recognition backends.
 
-## Статус проекта
+## Project Status
 
-🚧 **В разработке** — проект находится на стадии планирования и начальной реализации.
+🚧 **In Development** — The project is in the planning and initial implementation stage.
 
-## Быстрый старт
+## Quick Start
 
-### Предварительные требования
+### Prerequisites
 
 - CMake 3.20+
-- C++20 компилятор (GCC 10+, Clang 12+)
-- Системные библиотеки: PipeWire, PulseAudio
+- C++20 compiler (GCC 10+, Clang 12+)
+- System libraries: PipeWire, PulseAudio
 
-### Установка зависимостей (Arch Linux)
+### Installing Dependencies (Arch Linux)
 
 ```bash
-# Системные пакеты
+# System packages
 sudo pacman -S pipewire-pulse libpipewire libpulse cmake pkg-config
 
 # Vosk (AUR)
 yay -S vosk-api-bin
 
-# ONNX Runtime (опционально, для GigaAM)
+# ONNX Runtime (optional, for GigaAM)
 yay -S onnxruntime
 ```
 
-### Инициализация git submodules
+### Initializing Git Submodules
 
 ```bash
-# Клонируем header-only библиотеки в ThirdParty
+# Clone header-only libraries into ThirdParty
 git submodule add https://github.com/ToruNiina/toml11.git ThirdParty/toml11
 git submodule add https://github.com/gabime/spdlog.git ThirdParty/spdlog
 git submodule add https://github.com/CLIUtils/CLI11.git ThirdParty/CLI11
 git submodule add https://gitlab.com/libeigen/eigen.git ThirdParty/eigen
+git submodule add https://github.com/nerd-voice-interface/nerd-dictation-api.git ThirdParty/nerd-dictation-api
 
-# Инициализация всех submodules
+# Initialize all submodules
 git submodule update --init --recursive
 ```
 
-### Сборка
+### Building
 
 ```bash
 mkdir build && cd build
@@ -48,47 +49,49 @@ cmake ..
 make -j$(nproc)
 ```
 
-### Запуск
+### Running
 
 ```bash
 ./nerd-dictation --help
 ```
 
-## Структура проекта
+## Project Structure
 
 ```
 nerd-dictation/
-├── CMakeLists.txt          # Главный CMake файл
-├── README.md               # Этот файл
+├── CMakeLists.txt          # Main CMake file
+├── README.md               # This file
 ├── ThirdParty/             # Git submodules
-│   ├── toml11/            # TOML парсер
-│   ├── spdlog/            # Логирование
-│   ├── CLI11/             # CLI парсинг
-│   └── eigen/             # Линейная алгебра
-├── include/                # Публичные заголовки
+│   ├── toml11/            # TOML parser
+│   ├── spdlog/            # Logging
+│   ├── CLI11/             # CLI parsing
+│   ├── eigen/             # Linear algebra
+│   └── nerd-dictation-api/ # Backend C API
+├── include/                # Public headers
 │   └── nerd_dictation/
-├── src/                    # Исходный код
+├── src/                    # Source code
 │   └── main.cpp
-└── tests/                  # Тесты (опционально)
+└── tests/                  # Tests (optional)
 ```
 
-## Зависимости
+## Dependencies
 
-### Системные (через pkg-config)
-- **libpipewire-0.3** — Аудио захват (основной)
-- **libpulse** — Аудио захват (fallback)
-- **libvosk** — Vosk ASR бэкенд (опционально)
+### System (via pkg-config)
+- **libpipewire-0.3** — Audio capture (primary)
+- **libpulse** — Audio capture (fallback)
+- **libvosk** — Vosk ASR backend (optional)
 
 ### Git Submodules (ThirdParty/)
-- **toml11** — Парсинг TOML конфигурации
-- **spdlog** — Логирование
-- **CLI11** — CLI парсинг
-- **eigen** — Линейная алгебра (обязательно, для шумоподавления)
+- **toml11** — TOML configuration parsing
+- **spdlog** — Logging
+- **CLI11** — CLI parsing
+- **eigen** — Linear algebra (required, for noise suppression)
+- **nerd-dictation-api** — Backend C API
 
-### Опциональные
-- **onnxruntime** — Для GigaAM бэкенда
+### Optional
+- **onnxruntime** — For GigaAM backend
 
-## Опции сборки
+## Build Options
 
 ```bash
 cmake \
@@ -97,6 +100,6 @@ cmake \
       ..
 ```
 
-## Лицензия
+## License
 
-GPL-3.0 (как оригинальный nerd-dictation)
+GPL-3.0 (same as original nerd-dictation)

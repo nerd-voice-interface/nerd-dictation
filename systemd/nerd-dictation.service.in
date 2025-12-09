@@ -12,18 +12,18 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Окружение
+# Environment
 Environment="XDG_RUNTIME_DIR=%t"
 Environment="LD_LIBRARY_PATH=@ABS_INSTALL_PREFIX@/lib:@ABS_INSTALL_PREFIX@/lib/res_embed"
 
-# Безопасность
+# Security
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation %t
 
-# Ограничения ресурсов
+# Resource limits
 MemoryMax=2G
 CPUQuota=200%
 

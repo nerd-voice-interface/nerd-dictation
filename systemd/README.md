@@ -1,8 +1,8 @@
-# Systemd service для nerd-dictation
+# Systemd service for nerd-dictation
 
-## Установка
+## Installation
 
-Service файл автоматически устанавливается при выполнении `make install`:
+The service file is automatically installed when running `make install`:
 
 ```bash
 cd build
@@ -10,11 +10,11 @@ cmake ..
 make install
 ```
 
-Service файл будет установлен в `${CMAKE_INSTALL_PREFIX}/lib/systemd/user/nerd-dictation.service`
+The service file will be installed to `${CMAKE_INSTALL_PREFIX}/lib/systemd/user/nerd-dictation.service`
 
-## Использование
+## Usage
 
-### Включить автозапуск
+### Enable Autostart
 
 ```bash
 systemctl --user daemon-reload
@@ -22,59 +22,59 @@ systemctl --user enable nerd-dictation
 systemctl --user start nerd-dictation
 ```
 
-### Управление
+### Management
 
 ```bash
-# Запустить
+# Start
 systemctl --user start nerd-dictation
 
-# Остановить
+# Stop
 systemctl --user stop nerd-dictation
 
-# Статус
+# Status
 systemctl --user status nerd-dictation
 
-# Логи
+# Logs
 journalctl --user -u nerd-dictation -f
 ```
 
-### Отключить автозапуск
+### Disable Autostart
 
 ```bash
 systemctl --user disable nerd-dictation
 ```
 
-## Конфигурация
+## Configuration
 
-Service файл использует переменную `@CMAKE_INSTALL_PREFIX@`, которая подставляется при сборке через `configure_file`.
+The service file uses the `@CMAKE_INSTALL_PREFIX@` variable, which is substituted during build via `configure_file`.
 
-Путь к исполняемому файлу в service файле:
+Executable path in the service file:
 ```
 ExecStart=@CMAKE_INSTALL_PREFIX@/bin/nerd-dictation daemon
 ```
 
-После установки будет заменено на реальный путь, например:
+After installation, it will be replaced with the actual path, for example:
 ```
 ExecStart=/home/user/forge/nerd-dictation/install/bin/nerd-dictation daemon
 ```
 
-## Особенности
+## Features
 
-- **User service**: Устанавливается в `lib/systemd/user/` (не требует root)
-- **Зависимости**: Требует PipeWire/PulseAudio
-- **Безопасность**: Включены ограничения через systemd security features
-- **Ресурсы**: Ограничение памяти до 2GB, CPU до 200%
+- **User service**: Installed to `lib/systemd/user/` (does not require root)
+- **Dependencies**: Requires PipeWire/PulseAudio
+- **Security**: Restrictions enabled via systemd security features
+- **Resources**: Memory limit up to 2GB, CPU up to 200%
 
-## Ручная установка (без CMake)
+## Manual Installation (without CMake)
 
-Если нужно установить service файл вручную:
+If you need to install the service file manually:
 
 ```bash
-# Отредактировать путь в service файле
+# Edit the path in the service file
 sed "s|@CMAKE_INSTALL_PREFIX@|/path/to/install|g" \
     systemd/nerd-dictation.service.in > \
     ~/.config/systemd/user/nerd-dictation.service
 
-# Перезагрузить systemd
+# Reload systemd
 systemctl --user daemon-reload
 ```

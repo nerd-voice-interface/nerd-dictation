@@ -7,26 +7,26 @@
 namespace nerd_dictation::input {
 
 /**
- * Действие: ввод текста
+ * Action: text input
  */
 struct TextAction {
     std::string text;
 };
 
 /**
- * Действие: нажатие клавиш
+ * Action: key press
  */
 struct KeyAction {
-    std::string keys;  // Формат: "ctrl+Return", "shift+Tab"
+    std::string keys;  // Format: "ctrl+Return", "shift+Tab"
 };
 
 using Action = std::variant<TextAction, KeyAction>;
 
 /**
- * Постобработчик текста
- * - Замена слов на знаки препинания
- * - Замена слов на нажатия клавиш
- * - Капитализация после точки/!/?
+ * Text post-processor
+ * - Replace words with punctuation marks
+ * - Replace words with key presses
+ * - Capitalization after ./!/?
  */
 class TextPostProcessor {
 private:
@@ -35,17 +35,17 @@ private:
     
     std::string replace_punctuation(const std::string& text);
     std::string apply_capitalization(const std::string& text);
-    std::string process_text_fragment(const std::string& text);  // Как в оригинале: _process_text_fragment
+    std::string process_text_fragment(const std::string& text);  // As in original: _process_text_fragment
     std::vector<Action> extract_key_actions(const std::string& text);
     
 public:
     /**
-     * Обработать текст
+     * Process text
      */
     std::vector<Action> process(const std::string& text);
     
     /**
-     * Сбросить состояние (начать новую диктовку)
+     * Reset state (start new dictation)
      */
     void reset();
 };

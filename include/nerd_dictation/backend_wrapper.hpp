@@ -1,8 +1,8 @@
 /**
  * C++ Wrapper for nerd-dictation C API
  *
- * Удобная обёртка для использования C API бекендов в C++ коде.
- * Обеспечивает RAII, исключения и совместимость с STL.
+ * Convenient wrapper for using C API backends in C++ code.
+ * Provides RAII, exceptions, and STL compatibility.
  */
 
 #pragma once
@@ -17,7 +17,7 @@
 namespace nerd_dictation {
 
 /**
- * Результат распознавания (C++ версия)
+ * Recognition result (C++ version)
  */
 struct ASRResult {
     std::string text;
@@ -28,7 +28,7 @@ struct ASRResult {
     ASRResult(const std::string& t, bool final = false, float conf = -1.0f)
         : text(t), is_final(final), confidence(conf) {}
 
-    /* Конструктор из C структуры */
+    /* Constructor from C structure */
     explicit ASRResult(const struct nerd_dictation_result& r)
         : text(r.text ? r.text : "")
         , is_final(r.is_final != 0)
@@ -36,7 +36,7 @@ struct ASRResult {
 };
 
 /**
- * Информация о бекенде (C++ версия)
+ * Backend information (C++ version)
  */
 struct BackendInfo {
     std::string name;
@@ -56,7 +56,7 @@ struct BackendInfo {
 };
 
 /**
- * RAII wrapper для бекенда, загружаемого из .so
+ * RAII wrapper for backend loaded from .so
  */
 class Backend {
 public:
@@ -93,8 +93,8 @@ private:
 
 public:
     /**
-     * Загрузить бекенд из .so файла
-     * @param library_path Путь к .so файлу бекенда
+     * Load backend from .so file
+     * @param library_path Path to backend .so file
      */
     explicit Backend(const std::string& library_path) {
         /* Load shared library */
@@ -180,7 +180,7 @@ public:
     }
 
     /**
-     * Получить информацию о бекенде
+     * Get backend information
      */
     BackendInfo get_info() const {
         nerd_dictation_info info;
@@ -195,28 +195,28 @@ public:
     }
 
     /**
-     * Имя бекенда
+     * Backend name
      */
     std::string name() const {
         return get_info().name;
     }
 
     /**
-     * Поддерживает ли streaming
+     * Whether streaming is supported
      */
     bool supports_streaming() const {
         return get_info().streaming;
     }
 
     /**
-     * Ожидаемая частота дискретизации
+     * Expected sample rate
      */
     int sample_rate() const {
         return get_info().sample_rate;
     }
 
     /**
-     * Подать аудио данные
+     * Feed audio data
      */
     void feed(const int16_t* samples, size_t num_samples) {
         int ret = feed_func_(backend_, samples, num_samples);
@@ -231,7 +231,7 @@ public:
     }
 
     /**
-     * Получить текущий результат
+     * Get current result
      */
     ASRResult result() {
         struct nerd_dictation_result r;
@@ -244,7 +244,7 @@ public:
     }
 
     /**
-     * Финализировать и получить окончательный результат
+     * Finalize and get final result
      */
     ASRResult finalize() {
         struct nerd_dictation_result r;
@@ -257,7 +257,7 @@ public:
     }
 
     /**
-     * Сбросить состояние для нового сеанса
+     * Reset state for new session
      */
     void reset() {
         int ret = reset_func_(backend_);
@@ -268,10 +268,10 @@ public:
     }
 
     /**
-     * Потоковое распознавание с callbacks
+     * Streaming recognition with callbacks
      *
-     * @param audio_provider Функция для получения аудио. Возвращает true если есть данные.
-     * @param result_callback Функция для обработки результатов.
+     * @param audio_provider Function to get audio. Returns true if data available.
+     * @param result_callback Function to process results.
      */
     void transcribe_stream(
         std::function<bool(std::vector<int16_t>&)> audio_provider,
@@ -306,7 +306,7 @@ public:
     }
 
     /**
-     * Получить последнюю ошибку
+     * Get last error
      */
     std::string get_error() const {
         const char* err = get_error_func_(backend_);
@@ -314,7 +314,7 @@ public:
     }
 
     /**
-     * Проверить валидность
+     * Check validity
      */
     explicit operator bool() const {
         return backend_ != nullptr;

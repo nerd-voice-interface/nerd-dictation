@@ -1,9 +1,9 @@
 /**
  * Dummy ASR Backend - C API Implementation
  *
- * Тестовый бекенд для отладки фронтенда.
- * Генерирует случайные фразы с настраиваемой задержкой.
- * Не требует модели — всегда доступен.
+ * Test backend for debugging the frontend.
+ * Generates random phrases with configurable delay.
+ * Does not require a model — always available.
  */
 
 #include "nerd_dictation/backend_api.h"
@@ -14,22 +14,22 @@
 #include <chrono>
 #include <mutex>
 
-/* Sample rate для dummy бекенда */
+/* Sample rate for dummy backend */
 static constexpr int DUMMY_SAMPLE_RATE = 16000;
 
-/* Количество сэмплов для генерации результата */
-static constexpr size_t SAMPLES_PER_RESULT = DUMMY_SAMPLE_RATE * 2;  /* 2 секунды */
+/* Number of samples to generate a result */
+static constexpr size_t SAMPLES_PER_RESULT = DUMMY_SAMPLE_RATE * 2;  /* 2 seconds */
 
-/* Тестовые фразы */
+/* Test phrases */
 static const char* SAMPLE_PHRASES[] = {
-    "привет мир",
-    "это тестовый текст",
-    "распознавание речи работает",
-    "dummy бекенд генерирует текст",
-    "можно тестировать фронтенд",
-    "здесь могла быть ваша реклама",
-    "проверка связи один два три",
-    "тестирование системы диктовки",
+    "hello world",
+    "this is test text",
+    "speech recognition works",
+    "dummy backend generates text",
+    "can test frontend",
+    "your ad could be here",
+    "testing one two three",
+    "dictation system testing",
 };
 static constexpr size_t NUM_PHRASES = sizeof(SAMPLE_PHRASES) / sizeof(SAMPLE_PHRASES[0]);
 
@@ -37,13 +37,13 @@ static constexpr size_t NUM_PHRASES = sizeof(SAMPLE_PHRASES) / sizeof(SAMPLE_PHR
 struct nerd_dictation_backend {
     int sample_rate;
 
-    /* Счётчик принятых сэмплов */
+    /* Counter of received samples */
     size_t samples_received;
 
-    /* Генератор случайных чисел */
+    /* Random number generator */
     std::mt19937 rng;
 
-    /* Текущий partial результат (имитация) */
+    /* Current partial result (simulation) */
     std::string current_partial;
     int partial_word_count;
 
@@ -69,7 +69,7 @@ extern "C" nerd_dictation_t nerd_dictation_create(void) {
     backend->samples_received = 0;
     backend->partial_word_count = 0;
 
-    /* Инициализация RNG с текущим временем */
+    /* Initialize RNG with current time */
     auto seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     backend->rng.seed(static_cast<unsigned>(seed));
 
@@ -105,16 +105,16 @@ extern "C" int nerd_dictation_feed(nerd_dictation_t backend, const int16_t* samp
 
     backend->samples_received += num_samples;
 
-    /* Имитируем накопление partial результата */
+    /* Simulate accumulation of partial result */
     size_t progress = backend->samples_received % SAMPLES_PER_RESULT;
-    size_t words_to_show = (progress * 5) / SAMPLES_PER_RESULT;  /* 0-4 слова */
+    size_t words_to_show = (progress * 5) / SAMPLES_PER_RESULT;  /* 0-4 words */
 
     if (words_to_show > static_cast<size_t>(backend->partial_word_count)) {
-        /* Выбираем случайную фразу и берём часть слов */
+        /* Select random phrase and take part of words */
         std::uniform_int_distribution<size_t> dist(0, NUM_PHRASES - 1);
         const char* phrase = SAMPLE_PHRASES[dist(backend->rng)];
 
-        /* Берём первые N слов */
+        /* Take first N words */
         backend->current_partial.clear();
         const char* p = phrase;
         size_t word_count = 0;
@@ -137,12 +137,12 @@ extern "C" int nerd_dictation_result(nerd_dictation_t backend, struct nerd_dicta
 
     std::lock_guard<std::mutex> lock(backend->mutex);
 
-    /* Проверяем, накопилось ли достаточно сэмплов для "финального" результата */
+    /* Check if enough samples accumulated for "final" result */
     bool is_endpoint = (backend->samples_received >= SAMPLES_PER_RESULT) &&
                        ((backend->samples_received % SAMPLES_PER_RESULT) < static_cast<size_t>(backend->sample_rate / 10));
 
     if (is_endpoint) {
-        /* Генерируем финальный результат */
+        /* Generate final result */
         std::uniform_int_distribution<size_t> dist(0, NUM_PHRASES - 1);
         backend->result_text = SAMPLE_PHRASES[dist(backend->rng)];
 
@@ -150,11 +150,11 @@ extern "C" int nerd_dictation_result(nerd_dictation_t backend, struct nerd_dicta
         result->is_final = 1;
         result->confidence = 0.95f;
 
-        /* Сбрасываем partial */
+        /* Reset partial */
         backend->current_partial.clear();
         backend->partial_word_count = 0;
     } else {
-        /* Partial результат */
+        /* Partial result */
         backend->result_text = backend->current_partial;
         result->text = backend->result_text.c_str();
         result->is_final = 0;
@@ -169,7 +169,7 @@ extern "C" int nerd_dictation_finalize(nerd_dictation_t backend, struct nerd_dic
 
     std::lock_guard<std::mutex> lock(backend->mutex);
 
-    /* Генерируем финальный результат */
+    /* Generate final result */
     std::uniform_int_distribution<size_t> dist(0, NUM_PHRASES - 1);
     backend->result_text = SAMPLE_PHRASES[dist(backend->rng)];
 
@@ -177,7 +177,7 @@ extern "C" int nerd_dictation_finalize(nerd_dictation_t backend, struct nerd_dic
     result->is_final = 1;
     result->confidence = 0.95f;
 
-    /* Сбрасываем состояние */
+    /* Reset state */
     backend->samples_received = 0;
     backend->current_partial.clear();
     backend->partial_word_count = 0;

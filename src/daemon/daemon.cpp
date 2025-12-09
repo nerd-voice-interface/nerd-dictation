@@ -106,12 +106,12 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
     backend_path = expand_path(backend_path);
 
     try {
-        spdlog::info("Загрузка бекенда: {}", backend_path);
+        spdlog::info("Loading backend: {}", backend_path);
         backend_ = std::make_unique<Backend>(backend_path);
-        spdlog::info("Бекенд загружен: {} (sample rate: {} Hz)",
+        spdlog::info("Backend loaded: {} (sample rate: {} Hz)",
                      backend_->name(), backend_->sample_rate());
     } catch (const std::exception& e) {
-        spdlog::error("Не удалось загрузить бекенд {}: {}", backend_path, e.what());
+        spdlog::error("Failed to load backend {}: {}", backend_path, e.what());
         throw;
     }
 
@@ -125,11 +125,11 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
     preproc_config.high_pass_filter_enabled = true;
 
     if (!audio_preprocessor_->initialize(preproc_config)) {
-        spdlog::warn("Аудио препроцессор не инициализирован, продолжаем без обработки");
+        spdlog::warn("Audio preprocessor not initialized, continuing without processing");
         audio_preprocessor_.reset();
     }
 
-    spdlog::info("Daemon инициализирован, socket: {}", socket_path_);
+    spdlog::info("Daemon initialized, socket: {}", socket_path_);
 }
 
 DictationDaemon::~DictationDaemon() {
@@ -191,7 +191,7 @@ void DictationDaemon::process_and_type(const std::string& text) {
 }
 
 void DictationDaemon::dictation_loop() {
-    spdlog::info("Начало цикла диктовки");
+    spdlog::info("Starting dictation loop");
 
     std::unique_lock<std::mutex> lock(dictation_mutex_);
 
@@ -221,7 +221,7 @@ void DictationDaemon::dictation_loop() {
             },
             [this](const ASRResult& result) {
                 if (result.is_final && !result.text.empty()) {
-                    spdlog::info("Распознано: {}", result.text);
+                    spdlog::info("Recognized: {}", result.text);
                     process_and_type(result.text);
                 }
             }
@@ -235,12 +235,12 @@ void DictationDaemon::dictation_loop() {
 
     backend_->reset();
     state_ = DaemonState::Idle;
-    spdlog::info("Цикл диктовки завершён");
+    spdlog::info("Dictation loop finished");
 }
 
 void DictationDaemon::begin_dictation() {
     if (state_ == DaemonState::Listening) {
-        spdlog::warn("Диктовка уже запущена");
+        spdlog::warn("Dictation already started");
         return;
     }
 
@@ -253,12 +253,12 @@ void DictationDaemon::begin_dictation() {
         dictation_cv_.notify_all();
     }
 
-    spdlog::info("Диктовка запущена");
+    spdlog::info("Dictation started");
 }
 
 void DictationDaemon::end_dictation() {
     if (state_ != DaemonState::Listening) {
-        spdlog::warn("Диктовка не запущена");
+        spdlog::warn("Dictation not started");
         return;
     }
 
@@ -270,7 +270,7 @@ void DictationDaemon::end_dictation() {
         dictation_thread_.join();
     }
 
-    spdlog::info("Диктовка завершена");
+    spdlog::info("Dictation ended");
 }
 
 void DictationDaemon::cancel_dictation() {
@@ -286,7 +286,7 @@ void DictationDaemon::cancel_dictation() {
         dictation_thread_.join();
     }
 
-    spdlog::info("Диктовка отменена");
+    spdlog::info("Dictation cancelled");
 }
 
 void DictationDaemon::handle_client(int client_fd) {
@@ -319,13 +319,13 @@ void DictationDaemon::handle_client(int client_fd) {
 
     if (action == "begin") {
         begin_dictation();
-        response = create_json_response("ok", "Диктовка запущена");
+        response = create_json_response("ok", "Dictation started");
     } else if (action == "end") {
         end_dictation();
-        response = create_json_response("ok", "Диктовка завершена");
+        response = create_json_response("ok", "Dictation ended");
     } else if (action == "cancel") {
         cancel_dictation();
-        response = create_json_response("ok", "Диктовка отменена");
+        response = create_json_response("ok", "Dictation cancelled");
     } else if (action == "status") {
         std::string state_str = state_ == DaemonState::Listening ? "listening" : "idle";
         std::ostringstream oss;
@@ -333,7 +333,7 @@ void DictationDaemon::handle_client(int client_fd) {
             << "\",\"backend\":\"" << json_escape(get_backend_name()) << "\"}";
         response = oss.str();
     } else {
-        response = create_json_response("error", "Неизвестная команда: " + action);
+        response = create_json_response("error", "Unknown command: " + action);
     }
 
     write(client_fd, response.c_str(), response.length());
@@ -348,25 +348,25 @@ void DictationDaemon::socket_server_loop() {
 
     server_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd_ < 0) {
-        spdlog::error("Не удалось создать socket");
+        spdlog::error("Failed to create socket");
         return;
     }
 
     unlink(socket_path_.c_str());
 
     if (bind(server_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        spdlog::error("Не удалось привязать socket: {}", socket_path_);
+        spdlog::error("Failed to bind socket: {}", socket_path_);
         close(server_fd_);
         return;
     }
 
     if (listen(server_fd_, 5) < 0) {
-        spdlog::error("Не удалось начать прослушивание socket");
+        spdlog::error("Failed to listen on socket");
         close(server_fd_);
         return;
     }
 
-    spdlog::info("Socket server запущен: {}", socket_path_);
+    spdlog::info("Socket server started: {}", socket_path_);
 
     while (running_) {
         int client_fd = accept(server_fd_, nullptr, nullptr);
@@ -405,11 +405,11 @@ bool DictationDaemon::load_wake_word_models() {
 
     std::string model_path = expand_path(config_.wake_word.model_path);
 
-    spdlog::info("Загрузка Vosk модели для wake word: {}", model_path);
+    spdlog::info("Loading Vosk model for wake word: {}", model_path);
 
     wake_word_model_ = vosk_model_new(model_path.c_str());
     if (!wake_word_model_) {
-        spdlog::error("Не удалось загрузить Vosk модель для wake word: {}", model_path);
+        spdlog::error("Failed to load Vosk model for wake word: {}", model_path);
         return false;
     }
 
@@ -417,11 +417,11 @@ bool DictationDaemon::load_wake_word_models() {
     if (!wake_word_recognizer_) {
         vosk_model_free(wake_word_model_);
         wake_word_model_ = nullptr;
-        spdlog::error("Не удалось создать Vosk recognizer для wake word");
+        spdlog::error("Failed to create Vosk recognizer for wake word");
         return false;
     }
 
-    spdlog::info("Vosk модель для wake word загружена");
+    spdlog::info("Vosk model for wake word loaded");
     return true;
 #else
     spdlog::warn("Wake word detection disabled (Vosk not available at compile time)");
@@ -435,7 +435,7 @@ void DictationDaemon::start_audio_listener() {
     }
 
     audio_listener_thread_ = std::thread(&DictationDaemon::audio_listener_loop, this);
-    spdlog::info("Аудио-слушатель запущен");
+    spdlog::info("Audio listener started");
 }
 
 void DictationDaemon::start_wake_word_detection() {
@@ -448,13 +448,13 @@ void DictationDaemon::start_wake_word_detection() {
     }
 
     if (!load_wake_word_models()) {
-        spdlog::warn("Wake word detection отключён из-за ошибок загрузки");
+        spdlog::warn("Wake word detection disabled due to loading errors");
         return;
     }
 
     wake_word_running_ = true;
     wake_word_thread_ = std::thread(&DictationDaemon::wake_word_loop, this);
-    spdlog::info("Wake word detection запущен (слово: '{}')", wake_word_);
+    spdlog::info("Wake word detection started (word: '{}')", wake_word_);
 }
 
 std::string DictationDaemon::get_audio_command() const {
@@ -481,7 +481,7 @@ void DictationDaemon::audio_listener_loop() {
             audio_proc_pipe_ = popen(cmd.c_str(), "r");
 
             if (!audio_proc_pipe_) {
-                spdlog::error("Не удалось запустить аудио процесс: {}", cmd);
+                spdlog::error("Failed to start audio process: {}", cmd);
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 continue;
             }
@@ -534,7 +534,7 @@ void DictationDaemon::audio_listener_loop() {
             audio_proc_pipe_ = nullptr;
 
         } catch (const std::exception& e) {
-            spdlog::error("Ошибка аудио-слушателя: {}", e.what());
+            spdlog::error("Audio listener error: {}", e.what());
         }
 
         if (running_) {
@@ -632,14 +632,14 @@ void DictationDaemon::wake_word_loop() {
 
                                             std::transform(text.begin(), text.end(), text.begin(), ::tolower);
 
-                                            spdlog::info("[wake word] распознано: '{}'", text);
+                                            spdlog::info("[wake word] recognized: '{}'", text);
 
                                             std::string wake_lower = wake_word_;
                                             std::transform(wake_lower.begin(), wake_lower.end(), wake_lower.begin(), ::tolower);
 
                                             if (text.find(wake_lower) != std::string::npos ||
-                                                text.find("записи") != std::string::npos) {
-                                                spdlog::info("[wake word] активация по слову '{}'!", wake_word_);
+                                                text.find("записи") != std::string::npos) {  // Russian word variant
+                                                spdlog::info("[wake word] activation by word '{}'!", wake_word_);
 
                                                 vosk_recognizer_reset(wake_word_recognizer_);
 

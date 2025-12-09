@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт для инициализации git submodules
+# Script for initializing git submodules
 
 set -e
 
@@ -9,50 +9,50 @@ THIRDPARTY_DIR="$PROJECT_ROOT/ThirdParty"
 
 cd "$PROJECT_ROOT"
 
-echo "Инициализация git submodules в $THIRDPARTY_DIR..."
+echo "Initializing git submodules in $THIRDPARTY_DIR..."
 
-# Создаём директорию если её нет
+# Create directory if it doesn't exist
 mkdir -p "$THIRDPARTY_DIR"
 
-# TOML11 - header-only TOML парсер
+# TOML11 - header-only TOML parser
 if [ ! -d "$THIRDPARTY_DIR/toml11" ]; then
-    echo "Добавляем toml11..."
+    echo "Adding toml11..."
     git submodule add https://github.com/ToruNiina/toml11.git "$THIRDPARTY_DIR/toml11"
 else
-    echo "toml11 уже существует, пропускаем..."
+    echo "toml11 already exists, skipping..."
 fi
 
-# spdlog - быстрая библиотека логирования
+# spdlog - fast logging library
 if [ ! -d "$THIRDPARTY_DIR/spdlog" ]; then
-    echo "Добавляем spdlog..."
+    echo "Adding spdlog..."
     git submodule add https://github.com/gabime/spdlog.git "$THIRDPARTY_DIR/spdlog"
 else
-    echo "spdlog уже существует, пропускаем..."
+    echo "spdlog already exists, skipping..."
 fi
 
-# CLI11 - header-only CLI парсер
+# CLI11 - header-only CLI parser
 if [ ! -d "$THIRDPARTY_DIR/CLI11" ]; then
-    echo "Добавляем CLI11..."
+    echo "Adding CLI11..."
     git submodule add https://github.com/CLIUtils/CLI11.git "$THIRDPARTY_DIR/CLI11"
 else
-    echo "CLI11 уже существует, пропускаем..."
+    echo "CLI11 already exists, skipping..."
 fi
 
-# Eigen - линейная алгебра (обязательно, для шумоподавления)
+# Eigen - linear algebra (required, for noise suppression)
 if [ ! -d "$THIRDPARTY_DIR/eigen" ]; then
-    echo "Добавляем Eigen (обязательно для шумоподавления)..."
+    echo "Adding Eigen (required for noise suppression)..."
     git submodule add https://gitlab.com/libeigen/eigen.git "$THIRDPARTY_DIR/eigen"
 else
-    echo "Eigen уже существует, пропускаем..."
+    echo "Eigen already exists, skipping..."
 fi
 
-# Инициализация всех submodules
+# Initialize all submodules
 echo ""
-echo "Инициализация всех submodules..."
+echo "Initializing all submodules..."
 git submodule update --init --recursive
 
 echo ""
-echo "Готово! Все submodules инициализированы в $THIRDPARTY_DIR"
+echo "Done! All submodules initialized in $THIRDPARTY_DIR"
 echo ""
-echo "Для обновления submodules используйте:"
+echo "To update submodules use:"
 echo "  git submodule update --remote --recursive"

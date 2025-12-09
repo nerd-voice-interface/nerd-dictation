@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт для сборки и локальной установки проекта
+# Script for building and local installation of the project
 
 set -e
 
@@ -10,40 +10,40 @@ INSTALL_DIR="${PROJECT_ROOT}/install"
 
 cd "$PROJECT_ROOT"
 
-echo "=== Сборка и установка nerd-dictation ==="
+echo "=== Building and installing nerd-dictation ==="
 echo "Build directory: ${BUILD_DIR}"
 echo "Install directory: ${INSTALL_DIR}"
 echo ""
 
-# Создаём директории
+# Create directories
 mkdir -p "${BUILD_DIR}"
 mkdir -p "${INSTALL_DIR}"
 
-# Конфигурация CMake
+# CMake configuration
 cd "${BUILD_DIR}"
 cmake .. \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DENABLE_GIGAAM_BACKEND=OFF
 
-# Сборка
+# Build
 echo ""
-echo "=== Сборка проекта ==="
+echo "=== Building project ==="
 make -j$(nproc)
 
-# Установка
+# Install
 echo ""
-echo "=== Установка в ${INSTALL_DIR} ==="
+echo "=== Installing to ${INSTALL_DIR} ==="
 make install
 
 echo ""
-echo "=== Установка завершена ==="
+echo "=== Installation completed ==="
 echo ""
-echo "Установленные файлы:"
+echo "Installed files:"
 find "${INSTALL_DIR}" -type f 2>/dev/null | head -20
 echo ""
-echo "Для использования добавьте в PATH:"
+echo "To use, add to PATH:"
 echo "  export PATH=\"${INSTALL_DIR}/bin:\$PATH\""
 echo ""
-echo "Или используйте напрямую:"
+echo "Or use directly:"
 echo "  ${INSTALL_DIR}/bin/nerd-dictation --help"

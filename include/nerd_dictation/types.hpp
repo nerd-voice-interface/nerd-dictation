@@ -5,7 +5,7 @@
 namespace nerd_dictation {
 
 /**
- * Результат распознавания речи
+ * Speech recognition result
  */
 struct ASRResult {
     std::string text;

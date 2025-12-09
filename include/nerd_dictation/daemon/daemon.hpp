@@ -32,10 +32,10 @@ enum class DaemonState {
 };
 
 /**
- * Daemon для nerd-dictation
- * Держит модель в памяти и обрабатывает команды через Unix socket
+ * Daemon for nerd-dictation
+ * Keeps model in memory and processes commands via Unix socket
  *
- * Использует C API для бекендов (загружает .so динамически)
+ * Uses C API for backends (loads .so dynamically)
  */
 class DictationDaemon {
 private:
@@ -45,13 +45,13 @@ private:
     std::atomic<DaemonState> state_{DaemonState::Idle};
     std::atomic<bool> running_{true};
 
-    /* Потоки */
+    /* Threads */
     std::thread dictation_thread_;
     std::thread socket_thread_;
     std::thread wake_word_thread_;
     std::thread audio_listener_thread_;
 
-    /* Синхронизация */
+    /* Synchronization */
     std::mutex dictation_mutex_;
     std::condition_variable dictation_cv_;
     std::mutex audio_buffer_mutex_;
@@ -61,25 +61,25 @@ private:
     std::string socket_path_;
     int server_fd_ = -1;
 
-    /* Аудио буфер для диктовки (кольцевой буфер) */
+    /* Audio buffer for dictation (ring buffer) */
     std::deque<std::vector<int16_t>> audio_buffer_;
     size_t audio_buffer_max_chunks_ = 100;
     static constexpr size_t AUDIO_BUFFER_SECONDS = 1.5;
 
-    /* Очередь для wake word detection (без лимита) */
+    /* Queue for wake word detection (no limit) */
     std::queue<std::vector<int16_t>> wake_word_queue_;
 
-    /* Процесс захвата аудио */
+    /* Audio capture process */
     int audio_proc_pid_ = -1;
     FILE* audio_proc_pipe_ = nullptr;
 
-    /* Аудио препроцессинг (AGC + шумоподавление) */
+    /* Audio preprocessing (AGC + noise suppression) */
     std::unique_ptr<audio::AudioPreprocessor> audio_preprocessor_;
     std::vector<int16_t> preprocessed_buffer_;
 
-    /* Wake word detection (требует Vosk) */
+    /* Wake word detection (requires Vosk) */
     bool wake_word_enabled_ = true;
-    std::string wake_word_ = "запись";
+    std::string wake_word_ = "запись";  // Default wake word (Russian)
     std::atomic<bool> wake_word_running_{false};
 
     VoskModel* wake_word_model_ = nullptr;
@@ -102,27 +102,27 @@ public:
     ~DictationDaemon();
 
     /**
-     * Запустить daemon (блокирующий вызов)
+     * Run daemon (blocking call)
      */
     void run();
 
     /**
-     * Начать диктовку
+     * Start dictation
      */
     void begin_dictation();
 
     /**
-     * Завершить диктовку
+     * End dictation
      */
     void end_dictation();
 
     /**
-     * Отменить диктовку
+     * Cancel dictation
      */
     void cancel_dictation();
 
     /**
-     * Получить статус
+     * Get status
      */
     DaemonState get_state() const { return state_.load(); }
     std::string get_backend_name() const;

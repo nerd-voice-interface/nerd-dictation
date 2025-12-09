@@ -13,7 +13,7 @@
 namespace nerd_dictation::sounds {
 
 /**
- * WAV файл в памяти
+ * WAV file in memory
  */
 struct WavData {
     std::vector<int16_t> samples;
@@ -25,29 +25,29 @@ struct WavData {
 };
 
 /**
- * Встроенный проигрыватель WAV через PipeWire
+ * Built-in WAV player via PipeWire
  */
 class SoundPlayer {
 public:
     static SoundPlayer& instance();
 
     /**
-     * Инициализация плеера и загрузка звуков
+     * Initialize player and load sounds
      */
     bool init();
 
     /**
-     * Завершение работы
+     * Shutdown
      */
     void shutdown();
 
     /**
-     * Воспроизвести звук асинхронно
+     * Play sound asynchronously
      */
     void play(const std::string& name);
 
     /**
-     * Загрузить WAV файл
+     * Load WAV file
      */
     bool load_sound(const std::string& name, const std::string& path);
 
@@ -66,37 +66,37 @@ private:
 };
 
 /**
- * Найти звуковой файл по имени
+ * Find sound file by name
  */
 std::string find_sound_file(const std::string& name);
 
 /**
- * Загрузить WAV файл
+ * Load WAV file
  */
 WavData load_wav(const std::string& path);
 
 /**
- * Воспроизвести звук начала диктовки
+ * Play dictation start sound
  */
 void play_begin();
 
 /**
- * Воспроизвести звук окончания диктовки
+ * Play dictation end sound
  */
 void play_end();
 
 /**
- * Воспроизвести звук выполнения команды
+ * Play command execution sound
  */
 void play_execute();
 
 /**
- * Инициализировать звуковую подсистему
+ * Initialize sound subsystem
  */
 bool init_sounds();
 
 /**
- * Завершить звуковую подсистему
+ * Shutdown sound subsystem
  */
 void shutdown_sounds();
 

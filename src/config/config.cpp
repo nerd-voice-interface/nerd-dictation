@@ -7,7 +7,7 @@
 namespace nerd_dictation {
 
 std::optional<std::filesystem::path> find_config_file() {
-    // Проверяем ~/.config/nerd-dictation/config.toml
+    // Check ~/.config/nerd-dictation/config.toml
     const char* home = std::getenv("HOME");
     if (home) {
         std::filesystem::path user_config = std::filesystem::path(home) / ".config" / "nerd-dictation" / "config.toml";
@@ -15,7 +15,7 @@ std::optional<std::filesystem::path> find_config_file() {
             return user_config;
         }
         
-        // Проверяем default.toml в той же директории
+        // Check default.toml in the same directory
         std::filesystem::path default_config = std::filesystem::path(home) / ".config" / "nerd-dictation" / "default.toml";
         if (std::filesystem::exists(default_config)) {
             return default_config;
@@ -29,7 +29,7 @@ Config load_config(const std::filesystem::path& config_path) {
     Config config;
     
     if (!std::filesystem::exists(config_path)) {
-        spdlog::warn("Конфигурационный файл не найден: {}, используются значения по умолчанию", config_path.string());
+        spdlog::warn("Configuration file not found: {}, using default values", config_path.string());
         return config;
     }
     
@@ -61,7 +61,7 @@ Config load_config(const std::filesystem::path& config_path) {
             }
         }
         
-        // [dummy] или [vosk] или [gigaam] - model_path
+        // [dummy] or [vosk] or [gigaam] - model_path
         if (data.contains("dummy")) {
             const auto& dummy = toml::find(data, "dummy");
             if (dummy.contains("model_path")) {
@@ -71,7 +71,7 @@ Config load_config(const std::filesystem::path& config_path) {
             const auto& vosk = toml::find(data, "vosk");
             if (vosk.contains("model_path")) {
                 std::string path = toml::find<std::string>(vosk, "model_path");
-                // Разворачиваем ~
+                // Expand ~
                 if (path.front() == '~') {
                     const char* home = std::getenv("HOME");
                     if (home) {
@@ -82,7 +82,7 @@ Config load_config(const std::filesystem::path& config_path) {
             }
         }
         
-        // [wake_word] - настройки wake word detection
+        // [wake_word] - wake word detection settings
         if (data.contains("wake_word")) {
             const auto& wake_word = toml::find(data, "wake_word");
             if (wake_word.contains("enabled")) {
@@ -93,7 +93,7 @@ Config load_config(const std::filesystem::path& config_path) {
             }
             if (wake_word.contains("model_path")) {
                 std::string path = toml::find<std::string>(wake_word, "model_path");
-                // Разворачиваем ~
+                // Expand ~
                 if (!path.empty() && path.front() == '~') {
                     const char* home = std::getenv("HOME");
                     if (home) {
@@ -104,10 +104,10 @@ Config load_config(const std::filesystem::path& config_path) {
             }
         }
         
-        spdlog::info("Конфигурация загружена из: {}", config_path.string());
+        spdlog::info("Configuration loaded from: {}", config_path.string());
         
     } catch (const std::exception& e) {
-        spdlog::error("Ошибка загрузки конфигурации: {}", e.what());
+        spdlog::error("Error loading configuration: {}", e.what());
     }
     
     return config;

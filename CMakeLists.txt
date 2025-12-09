@@ -1,53 +1,53 @@
 cmake_minimum_required(VERSION 3.20)
 project(nerd-dictation
     VERSION 1.0.0
-    DESCRIPTION "Расширенная диктовка для Linux с подключаемыми бэкендами ASR"
+    DESCRIPTION "Advanced speech dictation for Linux with pluggable ASR backends"
     LANGUAGES ASM C CXX
 )
 
 # ============================================================================
-# Настройка установки
+# Installation Configuration
 # ============================================================================
 
-# Локальная установка по умолчанию
+# Local installation by default
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Install directory" FORCE)
-    message(STATUS "CMAKE_INSTALL_PREFIX установлен в: ${CMAKE_INSTALL_PREFIX}")
+    message(STATUS "CMAKE_INSTALL_PREFIX set to: ${CMAKE_INSTALL_PREFIX}")
 endif()
 
 # ============================================================================
-# Настройки компилятора
+# Compiler Settings
 # ============================================================================
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Предупреждения
+# Warnings
 if(MSVC)
     add_compile_options(/W4)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Оптимизация для Release
+# Optimization for Release
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 # ============================================================================
-# Опции сборки
+# Build Options
 # ============================================================================
 
 option(ENABLE_TESTS "Build tests" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 # ============================================================================
-# Пути для ThirdParty submodules
+# Paths for ThirdParty submodules
 # ============================================================================
 
 set(THIRDPARTY_DIR "${CMAKE_SOURCE_DIR}/ThirdParty")
 
 # ============================================================================
-# Поиск системных зависимостей через pkg-config
+# Finding System Dependencies via pkg-config
 # ============================================================================
 
 find_package(PkgConfig REQUIRED)
@@ -62,7 +62,7 @@ else()
     message(FATAL_ERROR "PipeWire not found. Install: sudo pacman -S libpipewire")
 endif()
 
-# PulseAudio Simple API (для воспроизведения звуков)
+# PulseAudio Simple API (for sound playback)
 pkg_check_modules(PULSE_SIMPLE libpulse-simple)
 if(PULSE_SIMPLE_FOUND)
     message(STATUS "PulseAudio Simple API found: ${PULSE_SIMPLE_VERSION}")
@@ -71,7 +71,7 @@ else()
     message(WARNING "PulseAudio Simple API not found, sound notifications will be disabled")
 endif()
 
-# WebRTC Audio Processing (для AGC и шумоподавления)
+# WebRTC Audio Processing (for AGC and noise suppression)
 pkg_check_modules(WEBRTC_APM REQUIRED webrtc-audio-processing-1)
 if(WEBRTC_APM_FOUND)
     message(STATUS "WebRTC Audio Processing found: ${WEBRTC_APM_VERSION}")
@@ -79,7 +79,7 @@ else()
     message(FATAL_ERROR "WebRTC Audio Processing not found. Install: sudo pacman -S webrtc-audio-processing-1")
 endif()
 
-# libsamplerate (для ресемплинга аудио)
+# libsamplerate (for audio resampling)
 pkg_check_modules(SAMPLERATE REQUIRED samplerate)
 if(SAMPLERATE_FOUND)
     message(STATUS "libsamplerate found: ${SAMPLERATE_VERSION}")
@@ -88,13 +88,13 @@ else()
 endif()
 
 # ============================================================================
-# Git Submodules из ThirdParty
+# Git Submodules from ThirdParty
 # ============================================================================
 
 # TOML11 (header-only)
 if(EXISTS "${THIRDPARTY_DIR}/toml11")
     message(STATUS "Using TOML11 from ThirdParty submodule")
-    # toml11 имеет структуру: include/toml.hpp или include/toml11/toml.hpp
+    # toml11 has structure: include/toml.hpp or include/toml11/toml.hpp
     if(EXISTS "${THIRDPARTY_DIR}/toml11/include/toml11/toml.hpp")
         set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11/include")
     elseif(EXISTS "${THIRDPARTY_DIR}/toml11/include/toml.hpp")
@@ -104,7 +104,7 @@ if(EXISTS "${THIRDPARTY_DIR}/toml11")
     endif()
     set(TOML11_FOUND TRUE)
 else()
-    # Попробуем найти системную версию
+    # Try to find system version
     find_path(TOML11_INCLUDE
         NAMES toml11/toml.hpp
         PATHS
@@ -127,7 +127,7 @@ if(EXISTS "${THIRDPARTY_DIR}/spdlog")
     add_subdirectory(${THIRDPARTY_DIR}/spdlog)
     set(SPDLOG_FOUND TRUE)
 else()
-    # Попробуем найти через find_package
+    # Try to find via find_package
     find_package(spdlog CONFIG QUIET)
     if(spdlog_FOUND)
         message(STATUS "Using system spdlog")
@@ -146,7 +146,7 @@ if(EXISTS "${THIRDPARTY_DIR}/CLI11")
     set(CLI11_INCLUDE "${THIRDPARTY_DIR}/CLI11/include")
     set(CLI11_FOUND TRUE)
 else()
-    # Попробуем найти системную версию
+    # Try to find system version
     find_path(CLI11_INCLUDE
         NAMES CLI/CLI.hpp
         PATHS
@@ -163,7 +163,7 @@ else()
     endif()
 endif()
 
-# Eigen (обязательно, для шумоподавления)
+# Eigen (required, for noise suppression)
 if(EXISTS "${THIRDPARTY_DIR}/eigen")
     message(STATUS "Using Eigen from ThirdParty submodule")
     add_subdirectory(${THIRDPARTY_DIR}/eigen)
@@ -181,7 +181,7 @@ else()
     endif()
 endif()
 
-# res_embed (для встраивания звуковых файлов)
+# res_embed (for embedding sound files)
 if(EXISTS "${THIRDPARTY_DIR}/res_embed")
     message(STATUS "Using res_embed from ThirdParty submodule")
     add_subdirectory(${THIRDPARTY_DIR}/res_embed)
@@ -204,18 +204,18 @@ else()
 endif()
 
 # ============================================================================
-# Структура проекта
+# Project Structure
 # ============================================================================
 
 set(INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
 set(SOURCE_DIR "${CMAKE_SOURCE_DIR}/src")
 
-# Создаём директории если их нет
+# Create directories if they don't exist
 file(MAKE_DIRECTORY ${INCLUDE_DIR})
 file(MAKE_DIRECTORY ${SOURCE_DIR})
 
 # ============================================================================
-# Исходные файлы
+# Source Files
 # ============================================================================
 
 set(SOURCES
@@ -240,13 +240,13 @@ set(HEADERS
 )
 
 # ============================================================================
-# Исполняемый файл
+# Executable
 # ============================================================================
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
 # ============================================================================
-# Dummy Backend (встроенный тестовый бекенд)
+# Dummy Backend (built-in test backend)
 # ============================================================================
 
 add_library(nerd-dictation-dummy SHARED
@@ -258,7 +258,7 @@ target_include_directories(nerd-dictation-dummy
     ${INCLUDE_DIR}
 )
 
-# nerd-dictation-api для dummy backend
+# nerd-dictation-api for dummy backend
 if(NERD_DICTATION_API_FOUND)
     target_include_directories(nerd-dictation-dummy PRIVATE ${NERD_DICTATION_API_INCLUDE})
 endif()
@@ -274,7 +274,7 @@ install(TARGETS nerd-dictation-dummy
 )
 
 # ============================================================================
-# Встраиваемые ресурсы (звуковые файлы)
+# Embedded Resources (sound files)
 # ============================================================================
 
 if(RES_EMBED_FOUND)
@@ -289,7 +289,7 @@ else()
 endif()
 
 # ============================================================================
-# Include директории
+# Include Directories
 # ============================================================================
 
 target_include_directories(${PROJECT_NAME}
@@ -318,7 +318,7 @@ if(NERD_DICTATION_API_FOUND)
 endif()
 
 # ============================================================================
-# Линковка библиотек
+# Library Linking
 # ============================================================================
 
 target_link_libraries(${PROJECT_NAME}
@@ -331,17 +331,17 @@ target_compile_options(${PROJECT_NAME}
     ${PIPEWIRE_CFLAGS_OTHER}
 )
 
-# PulseAudio Simple API (для звуковых уведомлений)
+# PulseAudio Simple API (for sound notifications)
 if(PULSE_SIMPLE_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${PULSE_SIMPLE_LIBRARIES})
     target_include_directories(${PROJECT_NAME} PRIVATE ${PULSE_SIMPLE_INCLUDE_DIRS})
 endif()
 
-# WebRTC Audio Processing (для AGC и шумоподавления)
+# WebRTC Audio Processing (for AGC and noise suppression)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${WEBRTC_APM_LIBRARIES})
 target_compile_options(${PROJECT_NAME} PRIVATE ${WEBRTC_APM_CFLAGS_OTHER})
 
-# libsamplerate (для ресемплинга)
+# libsamplerate (for resampling)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${SAMPLERATE_LIBRARIES})
 
 # spdlog
@@ -351,43 +351,43 @@ if(SPDLOG_FOUND)
     endif()
 endif()
 
-# Eigen (обязательно)
+# Eigen (required)
 if(TARGET Eigen3::Eigen)
     target_link_libraries(${PROJECT_NAME} PRIVATE Eigen3::Eigen)
 else()
-    # Fallback для системного Eigen
+    # Fallback for system Eigen
     find_package(Eigen3 REQUIRED)
     target_include_directories(${PROJECT_NAME} PRIVATE ${EIGEN3_INCLUDE_DIR})
 endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
 
 # ============================================================================
-# Установка
+# Installation
 # ============================================================================
 
-# Установка исполняемого файла
+# Install executable
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
 
-# Установка конфигурационных файлов (если есть)
+# Install configuration files (if any)
 # install(FILES config/default.toml DESTINATION share/nerd-dictation)
 
-# Установка заголовков (для разработки)
+# Install headers (for development)
 install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
     DESTINATION include
     FILES_MATCHING PATTERN "*.hpp"
 )
 
-# Звуковые файлы встроены в бинарник через res_embed
-# (установка отдельных файлов не требуется)
+# Sound files are embedded into binary via res_embed
+# (separate file installation not required)
 
 # ============================================================================
-# Systemd service
+# Systemd Service
 # ============================================================================
 
-# Конфигурируем systemd service файл с подстановкой install prefix
-# Используем абсолютный путь для CMAKE_INSTALL_PREFIX
+# Configure systemd service file with install prefix substitution
+# Use absolute path for CMAKE_INSTALL_PREFIX
 get_filename_component(ABS_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
-set(ABS_INSTALL_PREFIX "${ABS_INSTALL_PREFIX}")  # Убеждаемся что переменная установлена
+set(ABS_INSTALL_PREFIX "${ABS_INSTALL_PREFIX}")  # Ensure variable is set
 configure_file(
     ${CMAKE_SOURCE_DIR}/systemd/nerd-dictation.service.in
     ${CMAKE_BINARY_DIR}/nerd-dictation.service
@@ -395,47 +395,47 @@ configure_file(
     NEWLINE_STYLE UNIX
 )
 
-# Установка systemd service файла (только если не системная установка)
+# Install systemd service file (only if not system installation)
 if(NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr" AND 
    NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
-    # Локальная установка - в lib/systemd/user
+    # Local installation - to lib/systemd/user
     install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation.service
         DESTINATION lib/systemd/user
     )
-    message(STATUS "Systemd service будет установлен в: ${CMAKE_INSTALL_PREFIX}/lib/systemd/user/")
+    message(STATUS "Systemd service will be installed to: ${CMAKE_INSTALL_PREFIX}/lib/systemd/user/")
 else()
-    # Системная установка - в /usr/lib/systemd/user
+    # System installation - to /usr/lib/systemd/user
     install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation.service
         DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/user
     )
 endif()
 
 # ============================================================================
-# Бэкенды ASR (late binding через dlopen)
+# ASR Backends (late binding via dlopen)
 # ============================================================================
 #
-# ВАЖНО: Бэкенды НЕ линкуются при компиляции!
-# Они загружаются динамически через dlopen() в runtime.
+# IMPORTANT: Backends are NOT linked at compile time!
+# They are loaded dynamically via dlopen() at runtime.
 #
-# Бэкенды собираются отдельно как shared libraries:
+# Backends are built separately as shared libraries:
 #   - libnerd-dictation-t-one.so   (T-one CTC, 8kHz)
 #   - libnerd-dictation-gigaam.so  (GigaAM v3 CTC, 16kHz)
 #   - libnerd-dictation-vosk.so    (Vosk/Kaldi)
 #
-# Установите бэкенды в /usr/lib или укажите путь в конфиге.
+# Install backends to /usr/lib or specify path in config.
 #
 
-# Для dlopen нужна libdl
+# libdl is needed for dlopen
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
 
 # ============================================================================
-# Vosk для wake word detection (опционально линкуется напрямую)
+# Vosk for Wake Word Detection (optionally linked directly)
 # ============================================================================
 
 option(ENABLE_VOSK_WAKE_WORD "Enable Vosk for wake word detection" ON)
 
 if(ENABLE_VOSK_WAKE_WORD)
-    # Поиск libvosk
+    # Search for libvosk
     find_library(VOSK_LIBRARY vosk
         PATHS /usr/lib /usr/local/lib
     )
@@ -455,7 +455,7 @@ else()
 endif()
 
 # ============================================================================
-# Тесты (если включены)
+# Tests (if enabled)
 # ============================================================================
 
 if(ENABLE_TESTS)
@@ -464,7 +464,7 @@ if(ENABLE_TESTS)
 endif()
 
 # ============================================================================
-# Итоговая информация
+# Summary Information
 # ============================================================================
 
 message(STATUS "")

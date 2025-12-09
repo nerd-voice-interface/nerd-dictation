@@ -5,7 +5,7 @@
 namespace nerd_dictation::input {
 
 /**
- * Симуляция ввода текста через различные методы
+ * Text input simulation via various methods
  */
 class InputSimulator {
 private:
@@ -15,12 +15,12 @@ public:
     explicit InputSimulator(const std::string& method);
     
     /**
-     * Ввести текст
+     * Type text
      */
     void type_text(const std::string& text);
     
     /**
-     * Нажать комбинацию клавиш
+     * Press key combination
      */
     void press_keys(const std::string& keys);
 };

@@ -41,7 +41,7 @@ WavData load_wav(const std::string& path) {
 
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        spdlog::warn("Не удалось открыть WAV файл: {}", path);
+        spdlog::warn("Failed to open WAV file: {}", path);
         return result;
     }
 
@@ -51,12 +51,12 @@ WavData load_wav(const std::string& path) {
 
     if (std::strncmp(header.riff, "RIFF", 4) != 0 ||
         std::strncmp(header.wave, "WAVE", 4) != 0) {
-        spdlog::warn("Неверный формат WAV файла: {}", path);
+        spdlog::warn("Invalid WAV file format: {}", path);
         return result;
     }
 
     if (header.audio_format != 1) {
-        spdlog::warn("Поддерживается только PCM WAV: {}", path);
+        spdlog::warn("Only PCM WAV is supported: {}", path);
         return result;
     }
 
@@ -89,7 +89,7 @@ WavData load_wav(const std::string& path) {
                     result.samples[i] = (static_cast<int16_t>(temp[i]) - 128) * 256;
                 }
             } else {
-                spdlog::warn("Неподдерживаемая битность: {} бит", header.bits_per_sample);
+                spdlog::warn("Unsupported bit depth: {} bits", header.bits_per_sample);
                 result.samples.clear();
             }
             break;
@@ -100,7 +100,7 @@ WavData load_wav(const std::string& path) {
     }
 
     if (result.valid()) {
-        spdlog::debug("Загружен WAV: {} ({} Hz, {} ch, {} samples)",
+        spdlog::debug("Loaded WAV: {} ({} Hz, {} ch, {} samples)",
                      path, result.sample_rate, result.channels, result.samples.size());
     }
 
@@ -119,12 +119,12 @@ WavData load_wav_from_memory(const char* data, size_t size) {
 
     if (std::strncmp(header->riff, "RIFF", 4) != 0 ||
         std::strncmp(header->wave, "WAVE", 4) != 0) {
-        spdlog::warn("Неверный формат WAV в памяти");
+        spdlog::warn("Invalid WAV format in memory");
         return result;
     }
 
     if (header->audio_format != 1) {
-        spdlog::warn("Поддерживается только PCM WAV");
+        spdlog::warn("Only PCM WAV is supported");
         return result;
     }
 
@@ -162,7 +162,7 @@ WavData load_wav_from_memory(const char* data, size_t size) {
                     result.samples[i] = (static_cast<int16_t>(src[i]) - 128) * 256;
                 }
             } else {
-                spdlog::warn("Неподдерживаемая битность: {} бит", header->bits_per_sample);
+                spdlog::warn("Unsupported bit depth: {} bits", header->bits_per_sample);
                 result.samples.clear();
             }
             break;
@@ -172,7 +172,7 @@ WavData load_wav_from_memory(const char* data, size_t size) {
     }
 
     if (result.valid()) {
-        spdlog::debug("Загружен WAV из памяти ({} Hz, {} ch, {} samples)",
+        spdlog::debug("Loaded WAV from memory ({} Hz, {} ch, {} samples)",
                      result.sample_rate, result.channels, result.samples.size());
     }
 
@@ -262,13 +262,13 @@ bool SoundPlayer::init() {
             if (wav.valid()) {
                 std::lock_guard<std::mutex> lock(sounds_mutex_);
                 sounds_[sound.name] = std::move(wav);
-                spdlog::debug("Загружен встроенный звук: {}", sound.name);
+                spdlog::debug("Loaded embedded sound: {}", sound.name);
             }
         } else {
-            spdlog::warn("Встроенный звук не найден: {}", sound.resource_name);
+            spdlog::warn("Embedded sound not found: {}", sound.resource_name);
         }
     }
-    spdlog::info("Звуковая подсистема инициализирована (встроенные ресурсы)");
+    spdlog::info("Sound subsystem initialized (embedded resources)");
 #else
     /* Load default sounds from filesystem */
     const char* sound_names[] = {"begin", "end", "execute"};
@@ -278,7 +278,7 @@ bool SoundPlayer::init() {
             load_sound(name, path);
         }
     }
-    spdlog::info("Звуковая подсистема инициализирована");
+    spdlog::info("Sound subsystem initialized");
 #endif
 
     initialized_ = true;
@@ -296,7 +296,7 @@ void SoundPlayer::shutdown() {
     }
 
     initialized_ = false;
-    spdlog::debug("Звуковая подсистема остановлена");
+    spdlog::debug("Sound subsystem stopped");
 }
 
 bool SoundPlayer::load_sound(const std::string& name, const std::string& path) {
@@ -327,7 +327,7 @@ void SoundPlayer::play(const std::string& name) {
     if (wav.valid()) {
         play_wav_async(wav);
     } else {
-        spdlog::debug("Звук не найден: {}", name);
+        spdlog::debug("Sound not found: {}", name);
     }
 }
 
@@ -346,7 +346,7 @@ void SoundPlayer::play_wav_async(const WavData& wav) {
             nullptr, "notification", &ss, nullptr, nullptr, &error
         );
         if (!s) {
-            spdlog::warn("PulseAudio ошибка: {}", pa_strerror(error));
+            spdlog::warn("PulseAudio error: {}", pa_strerror(error));
             return;
         }
 
@@ -358,7 +358,7 @@ void SoundPlayer::play_wav_async(const WavData& wav) {
 }
 #else
 void SoundPlayer::play_wav_async(const WavData&) {
-    spdlog::debug("Воспроизведение недоступно (нет PulseAudio)");
+    spdlog::debug("Playback unavailable (no PulseAudio)");
 }
 #endif
 
