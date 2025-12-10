@@ -1,17 +1,21 @@
 [Unit]
 Description=X11/Wayland key binding daemon for nerd-dictation
-After=graphical-session.target
-Wants=graphical-session.target
+After=graphical.target
+Wants=graphical.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/xbindkeys
+ExecStart=/usr/bin/xbindkeys -n -v -f %h/.xbindkeysrc
 Restart=on-failure
 RestartSec=2
 StandardOutput=journal
 StandardError=journal
-# xbindkeys may exit immediately if no config or in non-graphical session
-# This is normal behavior - service will restart when needed
+# Set DISPLAY explicitly (adjust if using different display)
+# For Wayland, xbindkeys may need XWayland
+Environment="DISPLAY=:0"
+# -n: don't fork (stay in foreground for systemd)
+# -v: verbose output
+# -f: specify config file explicitly
 
 [Install]
 WantedBy=default.target
