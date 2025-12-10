@@ -143,49 +143,11 @@ cat > ~/.xbindkeysrc << 'EOF'
 "/path/to/nerd-dictation toggle"
   b:2
 EOF
-
-# Start xbindkeys using the helper script
-./scripts/xbindkeys-manager.sh start
-
-# Or manually
-xbindkeys
 ```
 
-**Managing xbindkeys:**
+**Managing xbindkeys via systemd (recommended):**
 
-The project includes a helper script `scripts/xbindkeys-manager.sh` for managing xbindkeys:
-
-```bash
-# Start xbindkeys (if not running)
-./scripts/xbindkeys-manager.sh start
-
-# Restart xbindkeys (stop and start)
-./scripts/xbindkeys-manager.sh restart
-
-# Stop xbindkeys
-./scripts/xbindkeys-manager.sh stop
-
-# Check status
-./scripts/xbindkeys-manager.sh status
-```
-
-**Autostart options:**
-
-**Option A: Window manager autostart**
-
-Add to your window manager config:
-
-```
-# i3/Sway
-exec --no-startup-id /path/to/scripts/xbindkeys-manager.sh start
-
-# Hyprland
-exec-once = /path/to/scripts/xbindkeys-manager.sh start
-```
-
-**Option B: Systemd user service (recommended)**
-
-Use the provided systemd service template:
+Use the provided systemd service template for automatic startup and management:
 
 ```bash
 # Copy service template
@@ -197,11 +159,38 @@ systemctl --user enable --now xbindkeys
 
 # Check status
 systemctl --user status xbindkeys
+
+# View logs
+journalctl --user -u xbindkeys -f
+```
+
+**Benefits of systemd service:**
+- Automatic startup on login
+- Automatic restart on failure
+- Proper logging via journalctl
+- Integration with systemd user session
+
+**Alternative: Manual start**
+
+If you prefer not to use systemd, you can start xbindkeys manually:
+
+```bash
+xbindkeys
+```
+
+And add to your window manager config for autostart:
+
+```
+# i3/Sway
+exec --no-startup-id xbindkeys
+
+# Hyprland
+exec-once = xbindkeys
 ```
 
 **Button codes:** `b:1` — left, `b:2` — middle (touchpad center button), `b:3` — right.
 
-**Note:** `xbindkeys` is the service used to monitor touchpad/mouse button presses. It works in both X11 and Wayland environments.
+**Note:** `xbindkeys` is the service used to monitor touchpad/mouse button presses. It works in both X11 and Wayland environments. The systemd service ensures xbindkeys starts automatically and restarts if it crashes.
 
 ### Configuration
 
