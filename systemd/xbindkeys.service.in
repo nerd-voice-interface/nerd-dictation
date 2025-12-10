@@ -10,6 +10,8 @@ Restart=on-failure
 RestartSec=2
 StandardOutput=journal
 StandardError=journal
+# xbindkeys may exit immediately if no config or in non-graphical session
+# This is normal behavior - service will restart when needed
 
 [Install]
 WantedBy=default.target
