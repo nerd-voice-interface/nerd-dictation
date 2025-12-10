@@ -13,16 +13,6 @@
 #include <queue>
 #include <deque>
 
-/* Forward declarations for Vosk (wake word only) */
-#if HAVE_VOSK_WAKE_WORD
-struct VoskModel;
-struct VoskRecognizer;
-#else
-/* Stubs when Vosk is not available at compile time */
-using VoskModel = void;
-using VoskRecognizer = void;
-#endif
-
 namespace nerd_dictation::daemon {
 
 enum class DaemonState {
@@ -77,13 +67,10 @@ private:
     std::unique_ptr<audio::AudioPreprocessor> audio_preprocessor_;
     std::vector<int16_t> preprocessed_buffer_;
 
-    /* Wake word detection (requires Vosk) */
+    /* Wake word detection (uses t-one backend) */
     bool wake_word_enabled_ = true;
     std::string wake_word_ = "запись";  // Default wake word (Russian)
     std::atomic<bool> wake_word_running_{false};
-
-    VoskModel* wake_word_model_ = nullptr;
-    VoskRecognizer* wake_word_recognizer_ = nullptr;
 
     void dictation_loop();
     void socket_server_loop();
@@ -91,7 +78,6 @@ private:
     void process_and_type(const std::string& text);
     void audio_listener_loop();
     void wake_word_loop();
-    bool load_wake_word_models();
     void start_audio_listener();
     void start_wake_word_detection();
     std::vector<int16_t> get_audio_chunk();
@@ -126,6 +112,24 @@ public:
      */
     DaemonState get_state() const { return state_.load(); }
     std::string get_backend_name() const;
+
+    /**
+     * Inject audio data for testing (simulates microphone input)
+     * Audio should be 16-bit PCM mono at the configured sample rate
+     * @param audio_data Vector of 16-bit samples
+     */
+    void inject_audio_for_test(const std::vector<int16_t>& audio_data);
+
+    /**
+     * Start wake word detection thread (for testing)
+     * Call this after inject_audio_for_test to process injected audio
+     */
+    void start_wake_word_detection_for_test();
+
+    /**
+     * Check if wake word detection is running
+     */
+    bool is_wake_word_running() const { return wake_word_running_.load(); }
 };
 
 } /* namespace nerd_dictation::daemon */

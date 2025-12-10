@@ -7,6 +7,7 @@ set(TEST_SOURCES
     test_input_simulator.cpp
     test_config.cpp
     test_daemon.cpp
+    test_wake_word.cpp
     # Source files for components being tested
     ${CMAKE_SOURCE_DIR}/src/input/input_simulator.cpp
     ${CMAKE_SOURCE_DIR}/src/input/postprocess.cpp
@@ -45,9 +46,10 @@ else()
 endif()
 
 # Link with main project libraries and dependencies
+# NOTE: Do NOT link against any backend (dummy, t-one, etc.) to avoid symbol conflicts
+# when loading different backends via dlopen at runtime
 target_link_libraries(nerd-dictation-tests
     PRIVATE
-    nerd-dictation-dummy
     GTest::gtest
     GTest::gtest_main
     GTest::gmock
@@ -82,10 +84,10 @@ target_compile_options(nerd-dictation-tests
     ${WEBRTC_APM_CFLAGS_OTHER}
 )
 
-# Set environment variable for tests to find dummy backend
+# Set environment variables for tests to find dummy backend and test samples
 # Use generator expression to get the full path to the built library
 set_target_properties(nerd-dictation-tests PROPERTIES
-    ENVIRONMENT "NERD_DICTATION_DUMMY_BACKEND_PATH=$<TARGET_FILE:nerd-dictation-dummy>;CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}"
+    ENVIRONMENT "NERD_DICTATION_DUMMY_BACKEND_PATH=$<TARGET_FILE:nerd-dictation-dummy>;CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR};TEST_SAMPLES_DIR=${CMAKE_SOURCE_DIR}/test-samples"
 )
 
 # Add test to CTest

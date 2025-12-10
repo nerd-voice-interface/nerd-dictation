@@ -429,32 +429,6 @@ endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
 
 # ============================================================================
-# Vosk for Wake Word Detection (optionally linked directly)
-# ============================================================================
-
-option(ENABLE_VOSK_WAKE_WORD "Enable Vosk for wake word detection" ON)
-
-if(ENABLE_VOSK_WAKE_WORD)
-    # Search for libvosk
-    find_library(VOSK_LIBRARY vosk
-        PATHS /usr/lib /usr/local/lib
-    )
-
-    if(VOSK_LIBRARY)
-        message(STATUS "Vosk library found: ${VOSK_LIBRARY} (wake word detection)")
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${VOSK_LIBRARY})
-        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK_WAKE_WORD=1)
-    else()
-        message(WARNING "Vosk library not found. Wake word detection will be disabled.")
-        message(WARNING "Install vosk: https://alphacephei.com/vosk/")
-        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK_WAKE_WORD=0)
-    endif()
-else()
-    message(STATUS "Vosk wake word detection: DISABLED")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK_WAKE_WORD=0)
-endif()
-
-# ============================================================================
 # Tests (if enabled)
 # ============================================================================
 
