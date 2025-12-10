@@ -144,18 +144,59 @@ cat > ~/.xbindkeysrc << 'EOF'
   b:2
 EOF
 
-# Start xbindkeys
+# Start xbindkeys using the helper script
+./scripts/xbindkeys-manager.sh start
+
+# Or manually
 xbindkeys
 ```
 
-Add autostart to your window manager config:
+**Managing xbindkeys:**
+
+The project includes a helper script `scripts/xbindkeys-manager.sh` for managing xbindkeys:
+
+```bash
+# Start xbindkeys (if not running)
+./scripts/xbindkeys-manager.sh start
+
+# Restart xbindkeys (stop and start)
+./scripts/xbindkeys-manager.sh restart
+
+# Stop xbindkeys
+./scripts/xbindkeys-manager.sh stop
+
+# Check status
+./scripts/xbindkeys-manager.sh status
+```
+
+**Autostart options:**
+
+**Option A: Window manager autostart**
+
+Add to your window manager config:
 
 ```
 # i3/Sway
-exec --no-startup-id xbindkeys
+exec --no-startup-id /path/to/scripts/xbindkeys-manager.sh start
 
 # Hyprland
-exec-once = xbindkeys
+exec-once = /path/to/scripts/xbindkeys-manager.sh start
+```
+
+**Option B: Systemd user service (recommended)**
+
+Use the provided systemd service template:
+
+```bash
+# Copy service template
+cp systemd/xbindkeys.service.in ~/.config/systemd/user/xbindkeys.service
+
+# Enable and start
+systemctl --user daemon-reload
+systemctl --user enable --now xbindkeys
+
+# Check status
+systemctl --user status xbindkeys
 ```
 
 **Button codes:** `b:1` — left, `b:2` — middle (touchpad center button), `b:3` — right.
@@ -290,6 +331,7 @@ nerd-dictation/
 - **CLI11** — CLI parsing
 - **eigen** — Linear algebra (required, for noise suppression)
 - **nerd-dictation-api** — Backend C API
+- **googletest** — GoogleTest framework (for tests, optional)
 
 ### Optional
 - **onnxruntime** — For GigaAM backend

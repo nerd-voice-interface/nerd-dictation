@@ -65,6 +65,24 @@ ExecStart=/home/user/forge/nerd-dictation/install/bin/nerd-dictation daemon
 - **Security**: Restrictions enabled via systemd security features
 - **Resources**: Memory limit up to 2GB, CPU up to 200%
 
+## xbindkeys Service (Optional)
+
+If you want to use touchpad/mouse button binding, you can also install xbindkeys as a systemd service:
+
+```bash
+# Copy xbindkeys service template
+cp systemd/xbindkeys.service.in ~/.config/systemd/user/xbindkeys.service
+
+# Enable and start
+systemctl --user daemon-reload
+systemctl --user enable --now xbindkeys
+
+# Check status
+systemctl --user status xbindkeys
+```
+
+This ensures xbindkeys starts automatically on login and restarts if it crashes.
+
 ## Manual Installation (without CMake)
 
 If you need to install the service file manually:

@@ -1,0 +1,15 @@
+[Unit]
+Description=X11/Wayland key binding daemon for nerd-dictation
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/xbindkeys
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
