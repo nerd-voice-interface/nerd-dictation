@@ -192,6 +192,22 @@ else()
     message(FATAL_ERROR "  git submodule update --init --recursive")
 endif()
 
+# pybind11 (for Python embedding)
+if(EXISTS "${THIRDPARTY_DIR}/pybind11")
+    message(STATUS "Using pybind11 from ThirdParty submodule")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+    add_subdirectory(${THIRDPARTY_DIR}/pybind11)
+    set(PYBIND11_FOUND TRUE)
+    message(STATUS "Python3 found: ${Python3_VERSION}")
+    message(STATUS "  Interpreter: ${Python3_EXECUTABLE}")
+    message(STATUS "  Include dirs: ${Python3_INCLUDE_DIRS}")
+    message(STATUS "  Libraries: ${Python3_LIBRARIES}")
+else()
+    message(FATAL_ERROR "pybind11 not found. Initialize submodule:")
+    message(FATAL_ERROR "  git submodule add https://github.com/pybind/pybind11.git ThirdParty/pybind11")
+    message(FATAL_ERROR "  git submodule update --init --recursive")
+endif()
+
 # nerd-dictation-api (Backend C API)
 if(EXISTS "${THIRDPARTY_DIR}/nerd-dictation-api")
     message(STATUS "Using nerd-dictation-api from ThirdParty submodule")
@@ -360,6 +376,17 @@ else()
     target_include_directories(${PROJECT_NAME} PRIVATE ${EIGEN3_INCLUDE_DIR})
 endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
+
+# Python/pybind11 (for embedded Python processing)
+if(PYBIND11_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE pybind11::embed)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_PYTHON)
+    # Set Python scripts directory and venv path
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        PYTHON_SCRIPTS_DIR="${CMAKE_SOURCE_DIR}"
+        PYTHON_VENV_SITE_PACKAGES="${CMAKE_SOURCE_DIR}/.venv/lib/python3.13/site-packages"
+    )
+endif()
 
 # ============================================================================
 # Installation

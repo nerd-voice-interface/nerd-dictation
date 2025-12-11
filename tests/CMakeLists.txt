@@ -84,12 +84,12 @@ target_compile_options(nerd-dictation-tests
     ${WEBRTC_APM_CFLAGS_OTHER}
 )
 
-# Set environment variables for tests to find dummy backend and test samples
-# Use generator expression to get the full path to the built library
-set_target_properties(nerd-dictation-tests PROPERTIES
-    ENVIRONMENT "NERD_DICTATION_DUMMY_BACKEND_PATH=$<TARGET_FILE:nerd-dictation-dummy>;CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR};TEST_SAMPLES_DIR=${CMAKE_SOURCE_DIR}/test-samples"
-)
-
 # Add test to CTest
+# Set environment variables for tests
+# Use semicolon-separated string (not CMake list) for ENVIRONMENT property
+set(TEST_ENV_STRING "NERD_DICTATION_DUMMY_BACKEND_PATH=$<TARGET_FILE:nerd-dictation-dummy>\;CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}\;TEST_SAMPLES_DIR=${CMAKE_SOURCE_DIR}/test-samples\;LD_LIBRARY_PATH=${CMAKE_SOURCE_DIR}/install/lib:${CMAKE_SOURCE_DIR}/install/lib/res_embed")
+
 include(GoogleTest)
-gtest_discover_tests(nerd-dictation-tests)
+gtest_discover_tests(nerd-dictation-tests
+    PROPERTIES ENVIRONMENT "${TEST_ENV_STRING}"
+)

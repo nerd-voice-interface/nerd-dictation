@@ -516,14 +516,22 @@ void DictationDaemon::wake_word_loop() {
     };
 
     size_t silence_chunks = 0;
-    constexpr size_t SILENCE_THRESHOLD_CHUNKS = 30;  /* ~1.5 seconds at 512 samples per chunk @ 8kHz */
+    constexpr size_t SILENCE_THRESHOLD_CHUNKS = 5;  /* ~320ms at 512 samples per chunk @ 8kHz (matches reference 300ms) */
     constexpr int16_t VAD_THRESHOLD = 200;  /* Lower threshold for voice detection */
     std::string last_partial;
+
+    /* Timing for detailed logging */
+    auto loop_start = std::chrono::steady_clock::now();
+    auto last_audio_time = loop_start;
+    auto speech_start_time = loop_start;
+    bool in_speech = false;
+    size_t chunks_processed = 0;
+    size_t chunks_with_audio = 0;
 
     spdlog::info("Wake word loop started using {} backend", backend_->name());
 
     while (wake_word_running_ && running_) {
-        /* Skip if dictation is active */
+        /* Skip if dictation is active - just wait, don't touch backend */
         if (state_ == DaemonState::Listening) {
             {
                 std::lock_guard<std::mutex> lock(wake_word_queue_mutex_);
@@ -531,22 +539,22 @@ void DictationDaemon::wake_word_loop() {
                     wake_word_queue_.pop();
                 }
             }
-
-            try {
-                backend_->reset();
-            } catch (const std::exception& e) {
-                spdlog::warn("Failed to reset backend: {}", e.what());
-            }
+            /* Don't reset backend here - dictation_loop is using it! */
             silence_chunks = 0;
             last_partial.clear();
+            in_speech = false;
+            chunks_processed = 0;
+            chunks_with_audio = 0;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
         /* Get audio from queue */
         std::vector<int16_t> chunk;
+        size_t queue_size = 0;
         {
             std::lock_guard<std::mutex> lock(wake_word_queue_mutex_);
+            queue_size = wake_word_queue_.size();
             if (wake_word_queue_.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
@@ -559,35 +567,75 @@ void DictationDaemon::wake_word_loop() {
             continue;
         }
 
+        auto now = std::chrono::steady_clock::now();
+        chunks_processed++;
+
         /* Simple VAD: check if this chunk has audio activity */
         int64_t sum = 0;
+        int16_t max_sample = 0;
         for (int16_t sample : chunk) {
-            sum += std::abs(sample);
+            int16_t abs_sample = std::abs(sample);
+            sum += abs_sample;
+            if (abs_sample > max_sample) max_sample = abs_sample;
         }
         int32_t avg = static_cast<int32_t>(sum / chunk.size());
 
         bool has_audio = (avg > VAD_THRESHOLD);
 
+        /* Track speech start */
+        if (has_audio && !in_speech) {
+            in_speech = true;
+            speech_start_time = now;
+            spdlog::info("[ww] speech START, queue={}, avg={}, max={}", queue_size, avg, max_sample);
+        } else if (!has_audio && in_speech) {
+            auto speech_duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - speech_start_time).count();
+            spdlog::info("[ww] speech END after {}ms, chunks_with_audio={}", speech_duration, chunks_with_audio);
+            in_speech = false;
+            chunks_with_audio = 0;
+        }
+
+        if (has_audio) {
+            chunks_with_audio++;
+            last_audio_time = now;
+        }
+
         /* Feed audio to backend and check for wake word */
+        auto feed_start = std::chrono::steady_clock::now();
         try {
             backend_->feed(chunk);
+            auto feed_end = std::chrono::steady_clock::now();
+            auto feed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(feed_end - feed_start).count();
 
+            auto result_start = std::chrono::steady_clock::now();
             ASRResult r = backend_->result();
+            auto result_end = std::chrono::steady_clock::now();
+            auto result_ms = std::chrono::duration_cast<std::chrono::milliseconds>(result_end - result_start).count();
+
+            /* Log timing if significant */
+            if (feed_ms > 10 || result_ms > 10) {
+                spdlog::info("[ww] feed={}ms result={}ms", feed_ms, result_ms);
+            }
 
             if (!r.text.empty()) {
                 /* Check partial result for faster detection */
                 if (r.text != last_partial) {
-                    spdlog::debug("[wake word] partial: '{}'", r.text);
+                    auto since_speech = in_speech ?
+                        std::chrono::duration_cast<std::chrono::milliseconds>(now - speech_start_time).count() : 0;
+                    spdlog::info("[ww] partial: '{}' (since_speech={}ms, is_final={})",
+                                 r.text, since_speech, r.is_final);
                     last_partial = r.text;
                 }
 
                 if (check_wake_word(r.text)) {
-                    spdlog::info("[wake word] detected: '{}' (is_final: {})",
-                                 r.text, r.is_final);
-                    spdlog::info("[wake word] activation by word '{}'!", wake_word_);
+                    auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(now - speech_start_time).count();
+                    spdlog::info("[ww] DETECTED: '{}' in {}ms (is_final: {})",
+                                 r.text, total_time, r.is_final);
+                    spdlog::info("[ww] activation by word '{}'!", wake_word_);
 
                     backend_->reset();
                     last_partial.clear();
+                    in_speech = false;
+                    chunks_with_audio = 0;
 
                     {
                         std::lock_guard<std::mutex> lock(audio_buffer_mutex_);
@@ -600,7 +648,7 @@ void DictationDaemon::wake_word_loop() {
 
                 /* If final result, reset for next utterance */
                 if (r.is_final) {
-                    spdlog::debug("[wake word] final result: '{}' (no match)", r.text);
+                    spdlog::info("[ww] final (no match): '{}'", r.text);
                     backend_->reset();
                     last_partial.clear();
                 }
@@ -613,6 +661,7 @@ void DictationDaemon::wake_word_loop() {
         if (!has_audio) {
             silence_chunks++;
             if (silence_chunks >= SILENCE_THRESHOLD_CHUNKS) {
+                spdlog::debug("[ww] silence reset after {} chunks", silence_chunks);
                 try {
                     backend_->reset();
                     last_partial.clear();
