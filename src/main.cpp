@@ -20,6 +20,21 @@
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
 namespace py = pybind11;
+
+/* ============================================================================
+ * Native sounds module for Python
+ * ============================================================================ */
+PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
+    m.doc() = "Native C++ functions for nerd-dictation";
+
+    // Sounds submodule
+    auto sounds = m.def_submodule("sounds", "Native sound playback via PulseAudio");
+    sounds.def("init", &nerd_dictation::sounds::init_sounds, "Initialize sound subsystem");
+    sounds.def("shutdown", &nerd_dictation::sounds::shutdown_sounds, "Shutdown sound subsystem");
+    sounds.def("play_begin", &nerd_dictation::sounds::play_begin, "Play dictation start sound");
+    sounds.def("play_end", &nerd_dictation::sounds::play_end, "Play dictation end sound");
+    sounds.def("play_execute", &nerd_dictation::sounds::play_execute, "Play command execution sound");
+}
 #endif
 
 /* ============================================================================
@@ -143,11 +158,12 @@ int main(int argc, char* argv[]) {
     int exit_code = 0;
 
     try {
-        // Add venv site-packages and scripts directory to Python path
+        // Add scripts directory (priority) and venv site-packages to Python path
         py::module_ sys = py::module_::import("sys");
         py::list path = sys.attr("path");
-        path.attr("insert")(0, PYTHON_VENV_SITE_PACKAGES);
-        path.attr("insert")(1, PYTHON_SCRIPTS_DIR);
+        // Local scripts first (for development), then venv for dependencies
+        path.attr("insert")(0, PYTHON_SCRIPTS_DIR);
+        path.attr("insert")(1, PYTHON_VENV_SITE_PACKAGES);
 
         spdlog::info("Python interpreter initialized");
         spdlog::info("Venv site-packages: {}", PYTHON_VENV_SITE_PACKAGES);

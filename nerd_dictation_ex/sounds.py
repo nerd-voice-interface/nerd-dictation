@@ -1,5 +1,8 @@
 """
 Модуль воспроизведения звуков для обратной связи.
+
+Использует нативную C++ реализацию через PulseAudio если доступна,
+иначе fallback на subprocess.
 """
 
 import subprocess
@@ -7,11 +10,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Путь к звукам (корень проекта / sounds)
-# __file__ = src/nerd_dictation_ex/sounds.py
-# parent = src/nerd_dictation_ex
-# parent.parent = src
-# parent.parent.parent = nerd-dictation-ex (корень)
+# Попытка импорта нативного модуля
+_native_sounds = None
+try:
+    from _nerd_dictation_native import sounds as _native_sounds
+    _native_sounds.init()
+except ImportError:
+    pass
+
+# Путь к звукам (fallback)
 SOUNDS_DIR = Path(__file__).parent.parent.parent / "sounds"
 
 # Типы звуков
@@ -51,13 +58,8 @@ def _find_player() -> Optional[list]:
     return None
 
 
-def play_sound(sound_type: str) -> None:
-    """
-    Воспроизвести звук асинхронно (не блокирует).
-
-    Args:
-        sound_type: Тип звука (begin, end, execute)
-    """
+def _play_sound_fallback(sound_type: str) -> None:
+    """Fallback воспроизведение через subprocess."""
     sound_path = _get_sound_path(sound_type)
     if not sound_path:
         return
@@ -67,7 +69,6 @@ def play_sound(sound_type: str) -> None:
         return
 
     try:
-        # Запускаем в фоне, не ждём завершения
         subprocess.Popen(
             player + [str(sound_path)],
             stdout=subprocess.DEVNULL,
@@ -77,16 +78,45 @@ def play_sound(sound_type: str) -> None:
         print(f"[sounds] ошибка воспроизведения: {e}", file=sys.stderr)
 
 
+def play_sound(sound_type: str) -> None:
+    """
+    Воспроизвести звук асинхронно (не блокирует).
+
+    Args:
+        sound_type: Тип звука (begin, end, execute)
+    """
+    if _native_sounds is not None:
+        # Используем нативную реализацию
+        if sound_type == SOUND_BEGIN:
+            _native_sounds.play_begin()
+        elif sound_type == SOUND_END:
+            _native_sounds.play_end()
+        elif sound_type == SOUND_EXECUTE:
+            _native_sounds.play_execute()
+    else:
+        # Fallback на subprocess
+        _play_sound_fallback(sound_type)
+
+
 def play_begin() -> None:
     """Воспроизвести звук начала диктовки."""
-    play_sound(SOUND_BEGIN)
+    if _native_sounds is not None:
+        _native_sounds.play_begin()
+    else:
+        _play_sound_fallback(SOUND_BEGIN)
 
 
 def play_end() -> None:
     """Воспроизвести звук окончания диктовки."""
-    play_sound(SOUND_END)
+    if _native_sounds is not None:
+        _native_sounds.play_end()
+    else:
+        _play_sound_fallback(SOUND_END)
 
 
 def play_execute() -> None:
     """Воспроизвести звук выполнения команды."""
-    play_sound(SOUND_EXECUTE)
+    if _native_sounds is not None:
+        _native_sounds.play_execute()
+    else:
+        _play_sound_fallback(SOUND_EXECUTE)
