@@ -19,6 +19,8 @@
 #ifdef HAVE_PYTHON
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
+#include <pybind11/functional.h>
+#include "nerd_dictation/backend_wrapper.hpp"
 namespace py = pybind11;
 
 /* ============================================================================
@@ -34,6 +36,69 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
     sounds.def("play_begin", &nerd_dictation::sounds::play_begin, "Play dictation start sound");
     sounds.def("play_end", &nerd_dictation::sounds::play_end, "Play dictation end sound");
     sounds.def("play_execute", &nerd_dictation::sounds::play_execute, "Play command execution sound");
+
+    // ASR Result class
+    py::class_<nerd_dictation::ASRResult>(m, "ASRResult")
+        .def(py::init<>())
+        .def(py::init<const std::string&, bool, float>(),
+             py::arg("text"), py::arg("is_final") = false, py::arg("confidence") = -1.0f)
+        .def_readwrite("text", &nerd_dictation::ASRResult::text)
+        .def_readwrite("is_final", &nerd_dictation::ASRResult::is_final)
+        .def_readwrite("confidence", &nerd_dictation::ASRResult::confidence)
+        .def("__repr__", [](const nerd_dictation::ASRResult& r) {
+            return "<ASRResult text='" + r.text + "' is_final=" +
+                   (r.is_final ? "True" : "False") + " confidence=" +
+                   std::to_string(r.confidence) + ">";
+        });
+
+    // Backend Info class
+    py::class_<nerd_dictation::BackendInfo>(m, "BackendInfo")
+        .def(py::init<>())
+        .def_readwrite("name", &nerd_dictation::BackendInfo::name)
+        .def_readwrite("streaming", &nerd_dictation::BackendInfo::streaming)
+        .def_readwrite("sample_rate", &nerd_dictation::BackendInfo::sample_rate)
+        .def_readwrite("channels", &nerd_dictation::BackendInfo::channels)
+        .def_readwrite("bits_per_sample", &nerd_dictation::BackendInfo::bits_per_sample)
+        .def("__repr__", [](const nerd_dictation::BackendInfo& i) {
+            return "<BackendInfo name='" + i.name + "' streaming=" +
+                   (i.streaming ? "True" : "False") + " sample_rate=" +
+                   std::to_string(i.sample_rate) + ">";
+        });
+
+    // Backend class - main ASR interface
+    py::class_<nerd_dictation::Backend>(m, "Backend")
+        .def(py::init<const std::string&>(), py::arg("library_path"),
+             "Load backend from .so file")
+        .def("get_info", &nerd_dictation::Backend::get_info,
+             "Get backend information")
+        .def("name", &nerd_dictation::Backend::name,
+             "Get backend name")
+        .def("supports_streaming", &nerd_dictation::Backend::supports_streaming,
+             "Check if streaming is supported")
+        .def("sample_rate", &nerd_dictation::Backend::sample_rate,
+             "Get expected sample rate")
+        .def("feed", [](nerd_dictation::Backend& self, py::bytes data) {
+            std::string_view sv = data;
+            const int16_t* samples = reinterpret_cast<const int16_t*>(sv.data());
+            size_t num_samples = sv.size() / sizeof(int16_t);
+            self.feed(samples, num_samples);
+        }, py::arg("audio_bytes"),
+           "Feed audio data (raw int16 PCM bytes)")
+        .def("feed_samples", [](nerd_dictation::Backend& self, const std::vector<int16_t>& samples) {
+            self.feed(samples);
+        }, py::arg("samples"),
+           "Feed audio samples (list of int16)")
+        .def("result", &nerd_dictation::Backend::result,
+             "Get current result")
+        .def("finalize", &nerd_dictation::Backend::finalize,
+             "Finalize and get final result")
+        .def("reset", &nerd_dictation::Backend::reset,
+             "Reset state for new session")
+        .def("get_error", &nerd_dictation::Backend::get_error,
+             "Get last error message")
+        .def("__bool__", [](const nerd_dictation::Backend& self) {
+            return static_cast<bool>(self);
+        });
 }
 #endif
 

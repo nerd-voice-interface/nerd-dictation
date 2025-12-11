@@ -7,6 +7,11 @@ nerd-dictation-ex backends
 Установка бэкендов:
     pip install nerd-dictation-vosk    # Vosk (CPU)
     pip install nerd-dictation-gigaam  # GigaAM (GPU)
+
+Нативные бэкенды (C++):
+    gigaam-native  - GigaAM через нативную реализацию
+    t-one-native   - T-One через нативную реализацию
+    dummy-native   - Тестовый бэкенд
 """
 
 from importlib.metadata import entry_points
@@ -15,9 +20,29 @@ from typing import Dict, Type
 from .base import ASRBackend, ASRResult
 
 
+def _discover_native_backends() -> Dict[str, Type[ASRBackend]]:
+    """Обнаружить нативные C++ бэкенды."""
+    backends = {}
+
+    try:
+        from .native import GigaAMNativeBackend, TOneNativeBackend, DummyNativeBackend
+
+        backends["gigaam-native"] = GigaAMNativeBackend
+        backends["t-one-native"] = TOneNativeBackend
+        backends["dummy-native"] = DummyNativeBackend
+    except ImportError:
+        # Нативный модуль недоступен
+        pass
+    except Exception as e:
+        import sys
+        print(f"Предупреждение: нативные бэкенды недоступны: {e}", file=sys.stderr)
+
+    return backends
+
+
 def _discover_backends() -> Dict[str, Type[ASRBackend]]:
     """
-    Обнаружить установленные бэкенды через entry points.
+    Обнаружить установленные бэкенды через entry points и нативные.
 
     Бэкенды регистрируются в pyproject.toml:
         [project.entry-points."nerd_dictation_ex.backends"]
@@ -25,6 +50,10 @@ def _discover_backends() -> Dict[str, Type[ASRBackend]]:
     """
     backends = {}
 
+    # Сначала нативные бэкенды (C++)
+    backends.update(_discover_native_backends())
+
+    # Затем бэкенды из entry points (могут перезаписать нативные)
     # Python 3.10+ API
     try:
         eps = entry_points(group="nerd_dictation_ex.backends")
