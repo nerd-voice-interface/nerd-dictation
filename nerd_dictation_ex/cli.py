@@ -176,12 +176,14 @@ class DictationDaemon:
         try:
             import torch
             print("Загрузка Silero VAD для wake word...", file=sys.stderr)
+            # Используем локальный кэш если доступен (skip_validation=True)
             self._vad_model, utils = torch.hub.load(
                 repo_or_dir='snakers4/silero-vad',
                 model='silero_vad',
                 force_reload=False,
                 onnx=False,
-                trust_repo=True
+                trust_repo=True,
+                skip_validation=True  # Не проверять GitHub если модель в кэше
             )
             (_, _, _, VADIterator, _) = utils
             sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
