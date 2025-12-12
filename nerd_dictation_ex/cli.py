@@ -897,6 +897,12 @@ def _cmd_begin_direct(args, config: dict) -> None:
     from .input import type_text
     from .sounds import play_begin, play_end
 
+    # Проверка: если daemon запущен — не запускать direct mode
+    if DaemonClient.is_running():
+        print("Daemon уже запущен! Используйте daemon для диктовки.", file=sys.stderr)
+        print("Команда: nerd-dictation begin", file=sys.stderr)
+        sys.exit(1)
+
     if COOKIE_PATH.exists():
         print("Диктовка уже запущена. Используйте 'end' или 'cancel'.", file=sys.stderr)
         sys.exit(1)
