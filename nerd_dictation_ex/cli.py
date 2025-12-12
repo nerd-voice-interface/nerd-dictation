@@ -128,7 +128,7 @@ class DictationDaemon:
         )
         self._vosk_model = None
         self._vosk_recognizer = None
-        self._vad_model = None
+        self._vad_module = None  # Нативный VAD модуль
         self._vad_iterator = None
         self._wake_word_thread: Optional[threading.Thread] = None
         self._wake_word_running = False
@@ -172,31 +172,33 @@ class DictationDaemon:
         if not self._wake_word_enabled:
             return False
 
-        # Загрузить Silero VAD
+        # Загрузить Silero VAD через нативный C++ VADManager
         try:
-            import torch
-            print("Загрузка Silero VAD для wake word...", file=sys.stderr)
-            # Используем локальный кэш если доступен (skip_validation=True)
-            self._vad_model, utils = torch.hub.load(
-                repo_or_dir='snakers4/silero-vad',
-                model='silero_vad',
-                force_reload=False,
-                onnx=False,
-                trust_repo=True,
-                skip_validation=True  # Не проверять GitHub если модель в кэше
-            )
-            (_, _, _, VADIterator, _) = utils
+            from . import vad
+            print("Загрузка нативного Silero VAD (ONNX)...", file=sys.stderr)
+
+            # Инициализируем VAD один раз при старте daemon
+            if not vad.is_initialized():
+                sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
+                if not vad.init(sample_rate=sample_rate, threshold=0.5):
+                    print(f"Ошибка инициализации VAD: {vad.get_error()}", file=sys.stderr)
+                    return False
+
+            # Создаём NativeVADIterator для wake word detection
             sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
-            self._vad_iterator = VADIterator(
-                self._vad_model,
-                sampling_rate=sample_rate,
+            self._vad_iterator = vad.NativeVADIterator(
                 threshold=0.5,
+                sampling_rate=sample_rate,
                 min_silence_duration_ms=300,
                 speech_pad_ms=100
             )
-            print("Silero VAD загружен", file=sys.stderr)
+            # Сохраняем ссылку на модуль для использования в dictation
+            self._vad_module = vad
+            print("Нативный Silero VAD загружен", file=sys.stderr)
         except Exception as e:
-            print(f"Ошибка загрузки Silero VAD: {e}", file=sys.stderr)
+            print(f"Ошибка загрузки нативного VAD: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
             return False
 
         # Загрузить Vosk small для wake word
@@ -239,14 +241,13 @@ class DictationDaemon:
 
     def _wake_word_loop(self) -> None:
         """Цикл распознавания wake word."""
-        import torch
         import numpy as np
         from queue import Empty
 
         sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
 
-        # VAD требует чанки по 512 сэмплов при 16kHz
-        vad_chunk_samples = 512
+        # VAD требует чанки по 512 сэмплов при 16kHz (или 256 при 8kHz)
+        vad_chunk_samples = 512 if sample_rate == 16000 else 256
         vad_buffer = np.array([], dtype=np.int16)
 
         # Буфер для накопления речи перед отправкой в Vosk
@@ -283,16 +284,13 @@ class DictationDaemon:
             audio_np = np.frombuffer(chunk, dtype=np.int16)
             vad_buffer = np.concatenate([vad_buffer, audio_np])
 
-            # Обрабатываем VAD чанками по 512 сэмплов
+            # Обрабатываем VAD чанками по 512 сэмплов (16kHz) или 256 (8kHz)
             while len(vad_buffer) >= vad_chunk_samples:
                 vad_chunk = vad_buffer[:vad_chunk_samples]
                 vad_buffer = vad_buffer[vad_chunk_samples:]
 
-                # Нормализация для VAD
-                audio_float = torch.from_numpy(vad_chunk.astype(np.float32) / 32768.0)
-
-                # Проверяем VAD
-                speech_dict = self._vad_iterator(audio_float, return_seconds=False)
+                # Проверяем VAD (NativeVADIterator принимает int16 напрямую)
+                speech_dict = self._vad_iterator(vad_chunk, return_seconds=False)
 
                 if speech_dict:
                     if 'start' in speech_dict:
@@ -458,30 +456,31 @@ class DictationDaemon:
         """
         Цикл диктовки для offline бэкендов с VAD-сегментацией.
 
-        Использует Silero VAD для определения пауз в речи.
+        Использует нативный Silero VAD (ONNX) для определения пауз в речи.
         Распознаёт накопленный буфер при обнаружении паузы.
         """
-        import torch
         import numpy as np
 
-        # Загружаем VAD если ещё не загружен (должен быть от wake word)
-        if self._vad_model is None:
-            print("[daemon] Загружаю Silero VAD для сегментации...", file=sys.stderr)
-            self._vad_model, utils = torch.hub.load(
-                repo_or_dir='snakers4/silero-vad',
-                model='silero_vad',
-                force_reload=False,
-                onnx=False,
-                trust_repo=True,
-                skip_validation=True,
-            )
-            self._vad_model.eval()
+        # Получаем ссылку на VAD модуль (должен быть инициализирован от wake word)
+        vad = getattr(self, '_vad_module', None)
+        if vad is None:
+            from . import vad as vad_module
+            vad = vad_module
+            self._vad_module = vad
 
-        # Сбрасываем состояние VAD в начале каждой сессии
-        self._vad_model.reset_states()
+        # Инициализируем VAD если ещё не инициализирован
+        if not vad.is_initialized():
+            print("[daemon] Инициализирую нативный VAD для сегментации...", file=sys.stderr)
+            if not vad.init(sample_rate=sample_rate, threshold=self.VAD_THRESHOLD):
+                print(f"[daemon] Ошибка инициализации VAD: {vad.get_error()}", file=sys.stderr)
+                return
+
+        # Сбрасываем состояние VAD в начале каждой сессии диктовки
+        # Это безопасно - C++ VADManager корректно обрабатывает reset
+        vad.reset_states()
 
         # VAD состояние
-        vad_chunk_samples = 512  # Silero VAD требует чанки по 512 samples
+        vad_chunk_samples = vad.get_chunk_size()  # 512 для 16kHz, 256 для 8kHz
         vad_buffer = np.array([], dtype=np.int16)
         silence_samples = 0
         speech_samples = 0
@@ -540,14 +539,14 @@ class DictationDaemon:
                 audio_np = np.frombuffer(chunk, dtype=np.int16)
                 vad_buffer = np.concatenate([vad_buffer, audio_np])
 
-                # Обрабатываем VAD чанками по 512 samples
+                # Обрабатываем VAD чанками
                 while len(vad_buffer) >= vad_chunk_samples:
                     vad_chunk = vad_buffer[:vad_chunk_samples]
                     vad_buffer = vad_buffer[vad_chunk_samples:]
 
-                    # Нормализация для VAD
-                    audio_float = torch.from_numpy(vad_chunk.astype(np.float32) / 32768.0)
-                    prob = self._vad_model(audio_float, sample_rate).item()
+                    # Вызываем нативный VAD (принимает int16 bytes)
+                    vad_result = vad.process_chunk(vad_chunk.tobytes())
+                    prob = vad_result.speech_probability
 
                     if prob >= self.VAD_THRESHOLD:
                         speech_samples += vad_chunk_samples

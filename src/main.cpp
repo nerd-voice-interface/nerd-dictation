@@ -24,6 +24,9 @@
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 #include "nerd_dictation/backend_wrapper.hpp"
+#ifdef HAVE_ONNXRUNTIME
+#include "nerd_dictation/vad/vad_manager.hpp"
+#endif
 namespace py = pybind11;
 
 /* ============================================================================
@@ -112,6 +115,66 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def("__bool__", [](const nerd_dictation::Backend& self) {
             return static_cast<bool>(self);
         });
+
+#ifdef HAVE_ONNXRUNTIME
+    // VAD submodule - Voice Activity Detection via Silero VAD ONNX
+    auto vad = m.def_submodule("vad", "Voice Activity Detection using Silero VAD (ONNX)");
+
+    // VADResult class
+    py::class_<nerd_dictation::vad::VADResult>(vad, "VADResult")
+        .def(py::init<>())
+        .def_readwrite("speech_probability", &nerd_dictation::vad::VADResult::speech_probability)
+        .def_readwrite("is_speech", &nerd_dictation::vad::VADResult::is_speech)
+        .def("__repr__", [](const nerd_dictation::vad::VADResult& r) {
+            return "<VADResult speech_prob=" + std::to_string(r.speech_probability) +
+                   " is_speech=" + (r.is_speech ? "True" : "False") + ">";
+        });
+
+    // VADConfig class
+    py::class_<nerd_dictation::vad::VADConfig>(vad, "VADConfig")
+        .def(py::init<>())
+        .def_readwrite("model_path", &nerd_dictation::vad::VADConfig::model_path)
+        .def_readwrite("sample_rate", &nerd_dictation::vad::VADConfig::sample_rate)
+        .def_readwrite("threshold", &nerd_dictation::vad::VADConfig::threshold)
+        .def_readwrite("use_gpu", &nerd_dictation::vad::VADConfig::use_gpu);
+
+    // VADManager singleton
+    py::class_<nerd_dictation::vad::VADManager, std::unique_ptr<nerd_dictation::vad::VADManager, py::nodelete>>(vad, "VADManager")
+        .def_static("instance", &nerd_dictation::vad::VADManager::instance,
+                    py::return_value_policy::reference,
+                    "Get singleton VADManager instance")
+        .def("init", &nerd_dictation::vad::VADManager::init,
+             py::arg("config"), "Initialize VAD with configuration")
+        .def("is_initialized", &nerd_dictation::vad::VADManager::is_initialized,
+             "Check if VAD is initialized")
+        .def("process_chunk", [](nerd_dictation::vad::VADManager& self, py::bytes data) {
+            std::string_view sv = data;
+            const int16_t* samples = reinterpret_cast<const int16_t*>(sv.data());
+            size_t num_samples = sv.size() / sizeof(int16_t);
+            return self.process_chunk(samples, num_samples);
+        }, py::arg("audio_bytes"),
+           "Process audio chunk (raw int16 PCM bytes) and get VAD result")
+        .def("process_chunk_samples", [](nerd_dictation::vad::VADManager& self, const std::vector<int16_t>& samples) {
+            return self.process_chunk(samples);
+        }, py::arg("samples"),
+           "Process audio samples (list of int16) and get VAD result")
+        .def("reset_states", &nerd_dictation::vad::VADManager::reset_states,
+             "Reset internal states for new session")
+        .def_property("threshold",
+                      &nerd_dictation::vad::VADManager::threshold,
+                      &nerd_dictation::vad::VADManager::set_threshold,
+                      "Speech detection threshold (0.0-1.0)")
+        .def_property_readonly("sample_rate", &nerd_dictation::vad::VADManager::sample_rate,
+                               "Sample rate (8000 or 16000)")
+        .def_property_readonly("chunk_size", &nerd_dictation::vad::VADManager::chunk_size,
+                               "Required chunk size in samples (512 for 16kHz, 256 for 8kHz)")
+        .def("get_error", &nerd_dictation::vad::VADManager::get_error,
+             "Get last error message");
+
+    // Helper function to find default model
+    vad.def("find_vad_model", &nerd_dictation::vad::find_vad_model,
+            "Find default Silero VAD model path");
+#endif
 }
 #endif
 

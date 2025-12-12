@@ -87,6 +87,26 @@ else()
     message(FATAL_ERROR "libsamplerate not found. Install: sudo pacman -S libsamplerate")
 endif()
 
+# ONNX Runtime (for Silero VAD)
+find_path(ONNXRUNTIME_INCLUDE_DIR
+    NAMES onnxruntime/core/session/onnxruntime_cxx_api.h
+    PATHS /usr/include /usr/local/include
+)
+find_library(ONNXRUNTIME_LIBRARY
+    NAMES onnxruntime
+    PATHS /usr/lib /usr/local/lib
+)
+if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+    message(STATUS "ONNX Runtime found:")
+    message(STATUS "  Include: ${ONNXRUNTIME_INCLUDE_DIR}")
+    message(STATUS "  Library: ${ONNXRUNTIME_LIBRARY}")
+    set(ONNXRUNTIME_FOUND TRUE)
+else()
+    message(WARNING "ONNX Runtime not found. VAD will be disabled.")
+    message(WARNING "Install: sudo pacman -S onnxruntime")
+    set(ONNXRUNTIME_FOUND FALSE)
+endif()
+
 # ============================================================================
 # Git Submodules from ThirdParty
 # ============================================================================
@@ -244,6 +264,11 @@ set(SOURCES
     ${SOURCE_DIR}/audio/audio_preprocessor.cpp
 )
 
+# VAD Manager (requires ONNX Runtime)
+if(ONNXRUNTIME_FOUND)
+    list(APPEND SOURCES ${SOURCE_DIR}/vad/vad_manager.cpp)
+endif()
+
 set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/types.hpp
     ${INCLUDE_DIR}/nerd_dictation/config.hpp
@@ -254,6 +279,11 @@ set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/daemon/daemon.hpp
     ${INCLUDE_DIR}/nerd_dictation/audio/audio_preprocessor.hpp
 )
+
+# VAD Manager header (requires ONNX Runtime)
+if(ONNXRUNTIME_FOUND)
+    list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/vad/vad_manager.hpp)
+endif()
 
 # ============================================================================
 # Executable
@@ -388,6 +418,13 @@ if(PYBIND11_FOUND)
     )
 endif()
 
+# ONNX Runtime (for Silero VAD)
+if(ONNXRUNTIME_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_LIBRARY})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME)
+endif()
+
 # ============================================================================
 # Installation
 # ============================================================================
@@ -495,6 +532,14 @@ message(STATUS "  spdlog: ${SPDLOG_FOUND}")
 message(STATUS "  CLI11: ${CLI11_FOUND}")
 message(STATUS "  Eigen: ${EIGEN_FOUND}")
 message(STATUS "  res_embed: ${RES_EMBED_FOUND} (embedded sounds)")
+message(STATUS "")
+message(STATUS "Voice Activity Detection:")
+if(ONNXRUNTIME_FOUND)
+    message(STATUS "  VAD Manager: ENABLED (Silero VAD via ONNX Runtime)")
+    message(STATUS "  ONNX Runtime: ${ONNXRUNTIME_LIBRARY}")
+else()
+    message(STATUS "  VAD Manager: DISABLED (ONNX Runtime not found)")
+endif()
 message(STATUS "")
 message(STATUS "Wake Word Detection:")
 if(VOSK_LIBRARY)
