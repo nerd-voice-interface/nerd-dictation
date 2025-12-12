@@ -414,10 +414,26 @@ class DictationDaemon:
                 play_execute()
                 press_keys(action.keys, self.config)
 
+    # VAD параметры для offline бэкендов (как в оригинальном GigaAM backend)
+    VAD_THRESHOLD = 0.5  # Порог вероятности речи
+    MIN_SILENCE_MS = 500  # Минимальная пауза для сегментации (мс)
+    MIN_SPEECH_MS = 250  # Минимальная длина речи (мс)
+    MAX_BUFFER_SECONDS = 25  # Максимум аудио в буфере
+
     def _dictation_loop(self) -> None:
         """Основной цикл диктовки (в отдельном потоке)."""
         sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
 
+        # Проверяем, поддерживает ли бэкенд потоковое распознавание
+        is_streaming = getattr(self.backend, 'supports_streaming', True)
+
+        if is_streaming:
+            self._dictation_loop_streaming(sample_rate)
+        else:
+            self._dictation_loop_buffered(sample_rate)
+
+    def _dictation_loop_streaming(self, sample_rate: int) -> None:
+        """Цикл диктовки для потоковых бэкендов."""
         try:
             for result in self.backend.transcribe_stream(
                 self._audio_stream(),
@@ -434,6 +450,126 @@ class DictationDaemon:
                 self._type_text(final.text)
         except Exception as e:
             print(f"Ошибка диктовки: {e}", file=sys.stderr)
+        finally:
+            self.backend.reset()
+            self.state = DaemonState.IDLE
+
+    def _dictation_loop_buffered(self, sample_rate: int) -> None:
+        """
+        Цикл диктовки для offline бэкендов с VAD-сегментацией.
+
+        Использует Silero VAD для определения пауз в речи.
+        Распознаёт накопленный буфер при обнаружении паузы.
+        """
+        import torch
+        import numpy as np
+
+        # Загружаем VAD если ещё не загружен (должен быть от wake word)
+        if self._vad_model is None:
+            print("[daemon] Загружаю Silero VAD для сегментации...", file=sys.stderr)
+            self._vad_model, utils = torch.hub.load(
+                repo_or_dir='snakers4/silero-vad',
+                model='silero_vad',
+                force_reload=False,
+                onnx=False,
+                trust_repo=True,
+                skip_validation=True,
+            )
+            self._vad_model.eval()
+
+        # VAD состояние
+        vad_chunk_samples = 512  # Silero VAD требует чанки по 512 samples
+        vad_buffer = np.array([], dtype=np.int16)
+        silence_samples = 0
+        speech_samples = 0
+        in_speech = False
+
+        # Аудио буфер для распознавания
+        audio_buffer = bytearray()
+        max_buffer_bytes = self.MAX_BUFFER_SECONDS * sample_rate * 2
+
+        # Пороги в samples
+        min_silence = int(self.MIN_SILENCE_MS * sample_rate / 1000)
+        min_speech = int(self.MIN_SPEECH_MS * sample_rate / 1000)
+
+        def reset_vad_state():
+            nonlocal silence_samples, speech_samples, in_speech, vad_buffer
+            silence_samples = 0
+            speech_samples = 0
+            in_speech = False
+            vad_buffer = np.array([], dtype=np.int16)
+            self._vad_model.reset_states()
+
+        # Минимум 0.5 секунды аудио для распознавания
+        min_audio_bytes = int(0.5 * sample_rate * 2)
+
+        def transcribe_and_type():
+            """Распознать буфер и вывести текст."""
+            nonlocal audio_buffer
+            if len(audio_buffer) < min_audio_bytes:
+                audio_buffer.clear()
+                return
+
+            # Подаём всё аудио в бэкенд и финализируем
+            self.backend._backend.feed(bytes(audio_buffer))
+            result = self.backend._backend.finalize()
+            audio_buffer.clear()
+
+            # Фильтруем пустые результаты
+            text = result.text.strip() if result.text else ""
+            if text:
+                print(f"[daemon] распознано: '{text}'", file=sys.stderr)
+                self._type_text(text)
+
+        try:
+            for chunk in self._audio_stream():
+                if self._stop_dictation.is_set():
+                    break
+
+                if not chunk:
+                    continue
+
+                # Добавляем в аудио буфер
+                audio_buffer.extend(chunk)
+
+                # Конвертируем для VAD
+                audio_np = np.frombuffer(chunk, dtype=np.int16)
+                vad_buffer = np.concatenate([vad_buffer, audio_np])
+
+                # Обрабатываем VAD чанками по 512 samples
+                while len(vad_buffer) >= vad_chunk_samples:
+                    vad_chunk = vad_buffer[:vad_chunk_samples]
+                    vad_buffer = vad_buffer[vad_chunk_samples:]
+
+                    # Нормализация для VAD
+                    audio_float = torch.from_numpy(vad_chunk.astype(np.float32) / 32768.0)
+                    prob = self._vad_model(audio_float, sample_rate).item()
+
+                    if prob >= self.VAD_THRESHOLD:
+                        speech_samples += vad_chunk_samples
+                        silence_samples = 0
+                        in_speech = True
+                    else:
+                        silence_samples += vad_chunk_samples
+
+                # Распознаём при паузе после речи или переполнении буфера
+                should_transcribe = (
+                    (in_speech and silence_samples >= min_silence and speech_samples >= min_speech) or
+                    len(audio_buffer) >= max_buffer_bytes
+                )
+
+                if should_transcribe:
+                    transcribe_and_type()
+                    reset_vad_state()
+
+            # Финальный результат
+            print("[daemon] вызываю finalize (buffered)", file=sys.stderr)
+            transcribe_and_type()
+
+        except Exception as e:
+            print(f"Ошибка диктовки (buffered): {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
         finally:
             self.backend.reset()
             self.state = DaemonState.IDLE

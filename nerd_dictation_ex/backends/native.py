@@ -18,13 +18,11 @@ except ImportError:
     pass
 
 
-# Пути поиска бэкендов
+# Пути поиска бэкендов (системные пакеты приоритетнее)
 _BACKEND_SEARCH_PATHS = [
     Path("/usr/lib"),
     Path("/usr/local/lib"),
     Path.home() / ".local/lib",
-    Path.home() / "forge/nerd-dictation-gigaam/build",
-    Path.home() / "forge/nerd-dictation_/backends/gigaam/build",
 ]
 
 
