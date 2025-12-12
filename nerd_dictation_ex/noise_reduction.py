@@ -1,127 +1,79 @@
 """
-Модуль для предварительной фильтрации шумоподавления аудио.
+Модуль для шумоподавления аудио через нативную C++ реализацию.
 
-Поддерживает несколько методов:
-- noisereduce: качественное шумоподавление через библиотеку noisereduce
-- spectral_gating: простой спектральный гейтинг (fallback)
+Использует WebRTC Audio Processing для:
+- Noise Suppression (шумоподавление)
+- Automatic Gain Control (автоматическая регулировка усиления)
+- High-pass filtering (фильтрация низких частот)
+
+Пример использования:
+    from nerd_dictation_ex.noise_reduction import create_noise_reducer
+
+    reducer = create_noise_reducer(config)
+    if reducer:
+        processed = reducer.process_chunk(audio_bytes)
 """
 
-import sys
 from typing import Generator, Optional
-import numpy as np
+
+from _nerd_dictation_native import audio as _native_audio
+
+# Экспортируем нативные классы
+AudioPreprocessorConfig = _native_audio.AudioPreprocessorConfig
+AudioPreprocessor = _native_audio.AudioPreprocessor
 
 
 class NoiseReducer:
-    """Класс для шумоподавления аудио потока."""
+    """
+    Класс для шумоподавления аудио потока.
+
+    Обёртка над нативным AudioPreprocessor с WebRTC noise suppression.
+    """
+
+    # Маппинг уровней шумоподавления
+    NOISE_LEVELS = {
+        "low": 0,
+        "moderate": 1,
+        "high": 2,
+        "veryhigh": 3,
+    }
 
     def __init__(
         self,
-        method: str = "noisereduce",
         sample_rate: int = 16000,
         enabled: bool = True,
-        **kwargs
+        noise_level: str = "high",
+        agc_enabled: bool = True,
+        high_pass_filter: bool = True,
     ):
         """
         Инициализировать фильтр шумоподавления.
 
         Args:
-            method: Метод шумоподавления ("noisereduce", "spectral_gating", "none")
-            sample_rate: Частота дискретизации
+            sample_rate: Частота дискретизации (8000 или 16000)
             enabled: Включено ли шумоподавление
-            **kwargs: Дополнительные параметры для конкретного метода
+            noise_level: Уровень шумоподавления ("low", "moderate", "high", "veryhigh")
+            agc_enabled: Включить автоматическую регулировку усиления
+            high_pass_filter: Включить high-pass фильтр
         """
-        self.method = method if enabled else "none"
         self.sample_rate = sample_rate
         self.enabled = enabled
-        self._reducer = None
-        self._noise_profile = None
-        self._noise_profile_samples = kwargs.get("noise_profile_samples", 1.0)  # секунды для профиля шума
-        self._noise_profile_collected = False
-        self._noise_buffer = []
+        self._preprocessor: Optional[AudioPreprocessor] = None
 
-        if self.method == "noisereduce":
-            self._init_noisereduce(kwargs)
-        elif self.method == "spectral_gating":
-            self._init_spectral_gating(kwargs)
+        if not enabled:
+            return
 
-    def _init_noisereduce(self, kwargs: dict) -> None:
-        """Инициализировать noisereduce."""
-        try:
-            import noisereduce as nr
-            self._nr = nr
-            self._reducer = "noisereduce"
-            print("[noise_reduction] Используется noisereduce", file=sys.stderr)
-        except ImportError:
-            print(
-                "[noise_reduction] noisereduce не установлен, используем spectral_gating",
-                file=sys.stderr
-            )
-            self.method = "spectral_gating"
-            self._init_spectral_gating(kwargs)
+        # Создаём нативный препроцессор
+        config = AudioPreprocessorConfig()
+        config.input_sample_rate = sample_rate
+        config.process_sample_rate = 16000  # WebRTC требует минимум 16kHz
+        config.noise_suppression_level = self.NOISE_LEVELS.get(noise_level.lower(), 2)
+        config.agc_enabled = agc_enabled
+        config.high_pass_filter_enabled = high_pass_filter
 
-    def _init_spectral_gating(self, kwargs: dict) -> None:
-        """Инициализировать простой спектральный гейтинг."""
-        self._reducer = "spectral_gating"
-        self._alpha = kwargs.get("alpha", 0.95)  # Коэффициент сглаживания
-        self._threshold = kwargs.get("threshold", 0.01)  # Порог для шума
-        print("[noise_reduction] Используется spectral_gating", file=sys.stderr)
-
-    def _reduce_noisereduce(self, audio: np.ndarray) -> np.ndarray:
-        """Применить noisereduce."""
-        if not self._noise_profile_collected:
-            # Собираем профиль шума из первых секунд
-            self._noise_buffer.append(audio.copy())
-            total_samples = sum(len(buf) for buf in self._noise_buffer)
-            if total_samples >= self._noise_profile_samples * self.sample_rate:
-                # Собрали достаточно для профиля
-                noise_profile = np.concatenate(self._noise_buffer)
-                self._noise_profile = noise_profile
-                self._noise_profile_collected = True
-                self._noise_buffer = []
-                print("[noise_reduction] Профиль шума собран", file=sys.stderr)
-            # Пока профиль не собран, возвращаем оригинал
-            return audio
-
-        # Применяем шумоподавление
-        try:
-            # Стационарный шум (быстрее)
-            reduced = self._nr.reduce_noise(
-                y=audio,
-                sr=self.sample_rate,
-                stationary=True,
-                prop_decrease=0.8,  # Насколько уменьшить шум (0-1)
-            )
-            return reduced.astype(np.int16)
-        except Exception as e:
-            print(f"[noise_reduction] Ошибка noisereduce: {e}", file=sys.stderr)
-            return audio
-
-    def _reduce_spectral_gating(self, audio: np.ndarray) -> np.ndarray:
-        """Применить простой спектральный гейтинг."""
-        if not self._noise_profile_collected:
-            # Собираем профиль шума
-            self._noise_buffer.append(audio.copy())
-            total_samples = sum(len(buf) for buf in self._noise_buffer)
-            if total_samples >= self._noise_profile_samples * self.sample_rate:
-                noise_profile = np.concatenate(self._noise_buffer)
-                # Вычисляем среднюю мощность шума
-                noise_power = np.mean(noise_profile.astype(np.float32) ** 2)
-                self._noise_threshold = noise_power * (1 + self._threshold)
-                self._noise_profile_collected = True
-                self._noise_buffer = []
-                print(f"[noise_reduction] Порог шума: {self._noise_threshold:.2f}", file=sys.stderr)
-            return audio
-
-        # Простой спектральный гейтинг
-        audio_float = audio.astype(np.float32) / 32768.0
-        power = audio_float ** 2
-        
-        # Если мощность ниже порога - это шум, уменьшаем
-        mask = power > self._noise_threshold
-        audio_float[mask] = audio_float[mask]
-        audio_float[~mask] = audio_float[~mask] * 0.1  # Сильно уменьшаем шум
-        
-        return (audio_float * 32768.0).astype(np.int16)
+        self._preprocessor = AudioPreprocessor()
+        if not self._preprocessor.initialize(config):
+            raise RuntimeError("Failed to initialize AudioPreprocessor")
 
     def process_chunk(self, chunk: bytes) -> bytes:
         """
@@ -133,24 +85,13 @@ class NoiseReducer:
         Returns:
             Обработанные байты
         """
-        if not self.enabled or self.method == "none":
+        if not self.enabled or self._preprocessor is None:
             return chunk
 
         try:
-            # Конвертируем байты в numpy array
-            audio = np.frombuffer(chunk, dtype=np.int16)
-
-            # Применяем выбранный метод
-            if self.method == "noisereduce":
-                reduced = self._reduce_noisereduce(audio)
-            elif self.method == "spectral_gating":
-                reduced = self._reduce_spectral_gating(audio)
-            else:
-                return chunk
-
-            # Конвертируем обратно в байты
-            return reduced.tobytes()
+            return self._preprocessor.process(chunk)
         except Exception as e:
+            import sys
             print(f"[noise_reduction] Ошибка обработки: {e}", file=sys.stderr)
             return chunk
 
@@ -171,9 +112,8 @@ class NoiseReducer:
 
     def reset(self) -> None:
         """Сбросить состояние (например, для новой сессии диктовки)."""
-        self._noise_profile_collected = False
-        self._noise_buffer = []
-        self._noise_profile = None
+        if self._preprocessor is not None:
+            self._preprocessor.reset()
 
 
 def create_noise_reducer(config: dict) -> Optional[NoiseReducer]:
@@ -187,18 +127,24 @@ def create_noise_reducer(config: dict) -> Optional[NoiseReducer]:
         NoiseReducer или None если отключено
     """
     noise_config = config.get("noise_reduction", {})
-    
+
     if not noise_config.get("enabled", False):
         return None
 
     sample_rate = config.get("audio", {}).get("sample_rate", 16000)
-    method = noise_config.get("method", "noisereduce")
-    
+
+    # Маппинг старых методов на уровни
+    method = noise_config.get("method", "high")
+    if method in ("noisereduce", "spectral_gating"):
+        # Старые методы -> high level
+        noise_level = "high"
+    else:
+        noise_level = method
+
     return NoiseReducer(
-        method=method,
         sample_rate=sample_rate,
         enabled=True,
-        noise_profile_samples=noise_config.get("noise_profile_samples", 1.0),
-        alpha=noise_config.get("alpha", 0.95),
-        threshold=noise_config.get("threshold", 0.01),
+        noise_level=noise_level,
+        agc_enabled=noise_config.get("agc_enabled", True),
+        high_pass_filter=noise_config.get("high_pass_filter", True),
     )

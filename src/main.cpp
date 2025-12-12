@@ -31,6 +31,7 @@
 #include "nerd_dictation/wake_word/wake_word_manager.hpp"
 #endif
 #include "nerd_dictation/postprocess/text_postprocessor.hpp"
+#include "nerd_dictation/audio/audio_preprocessor.hpp"
 namespace py = pybind11;
 
 /* ============================================================================
@@ -345,6 +346,75 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
     postprocess.def("is_key_action", [](const py::object& obj) {
         return py::isinstance<nerd_dictation::postprocess::KeyAction>(obj);
     }, py::arg("action"), "Check if action is KeyAction");
+
+    // ==========================================================================
+    // Audio Preprocessor submodule - WebRTC noise suppression and AGC
+    // ==========================================================================
+    auto audio = m.def_submodule("audio",
+        "Audio preprocessing: noise suppression and AGC via WebRTC");
+
+    // AudioPreprocessor::Config class
+    py::class_<nerd_dictation::audio::AudioPreprocessor::Config>(audio, "AudioPreprocessorConfig")
+        .def(py::init<>())
+        .def_readwrite("input_sample_rate",
+                       &nerd_dictation::audio::AudioPreprocessor::Config::input_sample_rate,
+                       "Input sample rate (default: 16000)")
+        .def_readwrite("process_sample_rate",
+                       &nerd_dictation::audio::AudioPreprocessor::Config::process_sample_rate,
+                       "Processing sample rate (default: 16000)")
+        .def_readwrite("noise_suppression_level",
+                       &nerd_dictation::audio::AudioPreprocessor::Config::noise_suppression_level,
+                       "Noise suppression level: 0=Low, 1=Moderate, 2=High, 3=VeryHigh")
+        .def_readwrite("agc_enabled",
+                       &nerd_dictation::audio::AudioPreprocessor::Config::agc_enabled,
+                       "Enable Automatic Gain Control")
+        .def_readwrite("agc_target_level_dbfs",
+                       &nerd_dictation::audio::AudioPreprocessor::Config::agc_target_level_dbfs,
+                       "AGC target level in dBFS (default: 3.0)")
+        .def_readwrite("high_pass_filter_enabled",
+                       &nerd_dictation::audio::AudioPreprocessor::Config::high_pass_filter_enabled,
+                       "Enable high-pass filter to remove DC offset");
+
+    // AudioPreprocessor class
+    py::class_<nerd_dictation::audio::AudioPreprocessor>(audio, "AudioPreprocessor")
+        .def(py::init<>())
+        .def("initialize", &nerd_dictation::audio::AudioPreprocessor::initialize,
+             py::arg("config"), "Initialize preprocessor with configuration")
+        .def("is_initialized", &nerd_dictation::audio::AudioPreprocessor::is_initialized,
+             "Check if preprocessor is initialized")
+        .def("reset", &nerd_dictation::audio::AudioPreprocessor::reset,
+             "Reset preprocessor state")
+        .def("process", [](nerd_dictation::audio::AudioPreprocessor& self, py::bytes data) {
+            // Convert bytes to int16 samples
+            std::string_view sv = data;
+            const int16_t* input = reinterpret_cast<const int16_t*>(sv.data());
+            size_t num_samples = sv.size() / sizeof(int16_t);
+
+            // Allocate output buffer
+            std::vector<int16_t> output(num_samples);
+
+            // Process
+            int result = self.process(input, num_samples, output.data());
+            if (result < 0) {
+                throw std::runtime_error("AudioPreprocessor::process() failed");
+            }
+
+            // Return as bytes
+            return py::bytes(reinterpret_cast<const char*>(output.data()),
+                            result * sizeof(int16_t));
+        }, py::arg("audio_bytes"),
+           "Process audio chunk (raw int16 PCM bytes)")
+        .def("process_samples", [](nerd_dictation::audio::AudioPreprocessor& self,
+                                   const std::vector<int16_t>& samples) {
+            std::vector<int16_t> output(samples.size());
+            int result = self.process(samples.data(), samples.size(), output.data());
+            if (result < 0) {
+                throw std::runtime_error("AudioPreprocessor::process() failed");
+            }
+            output.resize(result);
+            return output;
+        }, py::arg("samples"),
+           "Process audio samples (list of int16)");
 }
 #endif
 

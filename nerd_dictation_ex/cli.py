@@ -1079,6 +1079,9 @@ def main():
     # test-postprocess (для отладки)
     subparsers.add_parser("test-postprocess", help="Тест постобработки текста")
 
+    # test-audio (для отладки)
+    subparsers.add_parser("test-audio", help="Тест шумоподавления аудио")
+
     args = parser.parse_args()
     config = load_config()
 
@@ -1099,6 +1102,104 @@ def main():
         cmd_list_backends(args, config)
     elif args.command == "test-postprocess":
         cmd_test_postprocess()
+    elif args.command == "test-audio":
+        cmd_test_audio()
+
+
+def cmd_test_audio():
+    """Тест шумоподавления аудио."""
+    import struct
+    import math
+    from nerd_dictation_ex.noise_reduction import NoiseReducer, AudioPreprocessorConfig
+
+    print("=" * 50)
+    print("Testing audio preprocessing (WebRTC noise suppression)")
+    print("=" * 50)
+
+    # Test 1: Create NoiseReducer
+    print("\nTest 1 - Create NoiseReducer:")
+    try:
+        reducer = NoiseReducer(
+            sample_rate=16000,
+            enabled=True,
+            noise_level="high",
+            agc_enabled=True,
+        )
+        print("  ✓ NoiseReducer created successfully")
+    except Exception as e:
+        print(f"  ✗ Failed to create NoiseReducer: {e}")
+        sys.exit(1)
+
+    # Test 2: Process silence (should work)
+    print("\nTest 2 - Process silence:")
+    try:
+        # Generate 10ms of silence (160 samples at 16kHz)
+        silence = bytes(320)  # 160 samples * 2 bytes
+        processed = reducer.process_chunk(silence)
+        print(f"  Input:  {len(silence)} bytes")
+        print(f"  Output: {len(processed)} bytes")
+        print("  ✓ PASS")
+    except Exception as e:
+        print(f"  ✗ FAIL: {e}")
+        sys.exit(1)
+
+    # Test 3: Process sine wave
+    print("\nTest 3 - Process sine wave (440Hz):")
+    try:
+        # Generate 100ms of 440Hz sine wave
+        num_samples = 1600  # 100ms at 16kHz
+        samples = []
+        for i in range(num_samples):
+            # 440Hz sine wave at half amplitude
+            sample = int(16384 * math.sin(2 * math.pi * 440 * i / 16000))
+            samples.append(sample)
+
+        audio_bytes = struct.pack(f"<{len(samples)}h", *samples)
+        processed = reducer.process_chunk(audio_bytes)
+
+        # Decode processed
+        processed_samples = struct.unpack(f"<{len(processed)//2}h", processed)
+
+        # Check output is not empty and has reasonable amplitude
+        max_in = max(abs(s) for s in samples)
+        max_out = max(abs(s) for s in processed_samples) if processed_samples else 0
+
+        print(f"  Input:  {len(samples)} samples, max={max_in}")
+        print(f"  Output: {len(processed_samples)} samples, max={max_out}")
+
+        if len(processed_samples) > 0 and max_out > 0:
+            print("  ✓ PASS")
+        else:
+            print("  ✗ FAIL: Empty or zero output")
+            sys.exit(1)
+    except Exception as e:
+        print(f"  ✗ FAIL: {e}")
+        sys.exit(1)
+
+    # Test 4: Reset
+    print("\nTest 4 - Reset:")
+    try:
+        reducer.reset()
+        print("  ✓ PASS")
+    except Exception as e:
+        print(f"  ✗ FAIL: {e}")
+        sys.exit(1)
+
+    # Test 5: Disabled reducer
+    print("\nTest 5 - Disabled reducer:")
+    try:
+        disabled = NoiseReducer(enabled=False)
+        test_data = b"\x00\x10" * 100
+        result = disabled.process_chunk(test_data)
+        assert result == test_data, "Disabled reducer should pass through unchanged"
+        print("  ✓ PASS")
+    except Exception as e:
+        print(f"  ✗ FAIL: {e}")
+        sys.exit(1)
+
+    print("\n" + "=" * 50)
+    print("All audio tests PASSED!")
+    print("=" * 50)
 
 
 def cmd_test_postprocess():
