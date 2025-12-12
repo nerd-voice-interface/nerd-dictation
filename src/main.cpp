@@ -40,6 +40,16 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
     sounds.def("play_end", &nerd_dictation::sounds::play_end, "Play dictation end sound");
     sounds.def("play_execute", &nerd_dictation::sounds::play_execute, "Play command execution sound");
 
+    // Input submodule
+    auto input = m.def_submodule("input", "Native input simulation (xdotool, ydotool, wtype, dotool)");
+    py::class_<nerd_dictation::input::InputSimulator>(input, "InputSimulator")
+        .def(py::init<const std::string&>(), py::arg("method"),
+             "Create input simulator with specified method (xdotool, ydotool, wtype, dotool, stdout)")
+        .def("type_text", &nerd_dictation::input::InputSimulator::type_text,
+             py::arg("text"), "Type text using configured method")
+        .def("press_keys", &nerd_dictation::input::InputSimulator::press_keys,
+             py::arg("keys"), "Press key combination (e.g., 'ctrl+Return')");
+
     // ASR Result class
     py::class_<nerd_dictation::ASRResult>(m, "ASRResult")
         .def(py::init<>())
