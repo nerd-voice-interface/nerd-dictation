@@ -27,6 +27,9 @@
 #ifdef HAVE_ONNXRUNTIME
 #include "nerd_dictation/vad/vad_manager.hpp"
 #endif
+#ifdef HAVE_VOSK
+#include "nerd_dictation/wake_word/wake_word_manager.hpp"
+#endif
 namespace py = pybind11;
 
 /* ============================================================================
@@ -174,6 +177,77 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
     // Helper function to find default model
     vad.def("find_vad_model", &nerd_dictation::vad::find_vad_model,
             "Find default Silero VAD model path");
+#endif
+
+#ifdef HAVE_VOSK
+    // Wake Word submodule - Vosk-based wake word detection
+    auto wake_word = m.def_submodule("wake_word", "Wake word detection using Vosk ASR");
+
+    // WakeWordResult class
+    py::class_<nerd_dictation::wake_word::WakeWordResult>(wake_word, "WakeWordResult")
+        .def(py::init<>())
+        .def_readwrite("text", &nerd_dictation::wake_word::WakeWordResult::text,
+                       "Recognized text")
+        .def_readwrite("detected", &nerd_dictation::wake_word::WakeWordResult::detected,
+                       "True if wake word was detected")
+        .def_readwrite("confidence", &nerd_dictation::wake_word::WakeWordResult::confidence,
+                       "Recognition confidence");
+
+    // WakeWordConfig class
+    py::class_<nerd_dictation::wake_word::WakeWordConfig>(wake_word, "WakeWordConfig")
+        .def(py::init<>())
+        .def_readwrite("model_path", &nerd_dictation::wake_word::WakeWordConfig::model_path,
+                       "Path to Vosk model directory")
+        .def_readwrite("wake_word", &nerd_dictation::wake_word::WakeWordConfig::wake_word,
+                       "Wake word to detect")
+        .def_readwrite("variants", &nerd_dictation::wake_word::WakeWordConfig::variants,
+                       "Alternative forms of wake word")
+        .def_readwrite("sample_rate", &nerd_dictation::wake_word::WakeWordConfig::sample_rate,
+                       "Audio sample rate")
+        .def_readwrite("log_level", &nerd_dictation::wake_word::WakeWordConfig::log_level,
+                       "Vosk log level (-1 = quiet)");
+
+    // WakeWordManager singleton
+    py::class_<nerd_dictation::wake_word::WakeWordManager,
+               std::unique_ptr<nerd_dictation::wake_word::WakeWordManager, py::nodelete>>(wake_word, "WakeWordManager")
+        .def_static("instance", &nerd_dictation::wake_word::WakeWordManager::instance,
+                    py::return_value_policy::reference,
+                    "Get singleton WakeWordManager instance")
+        .def("init", &nerd_dictation::wake_word::WakeWordManager::init,
+             py::arg("config"), "Initialize with configuration")
+        .def("is_initialized", &nerd_dictation::wake_word::WakeWordManager::is_initialized,
+             "Check if manager is initialized")
+        .def("process_speech", [](nerd_dictation::wake_word::WakeWordManager& self, py::bytes data) {
+            std::string_view sv = data;
+            return self.process_speech(reinterpret_cast<const uint8_t*>(sv.data()), sv.size());
+        }, py::arg("audio_bytes"),
+           "Process speech audio and check for wake word")
+        .def("process_speech_samples", [](nerd_dictation::wake_word::WakeWordManager& self,
+                                          const std::vector<int16_t>& samples) {
+            return self.process_speech(samples);
+        }, py::arg("samples"),
+           "Process speech samples (list of int16)")
+        .def("reset", &nerd_dictation::wake_word::WakeWordManager::reset,
+             "Reset recognizer state")
+        .def_property("wake_word",
+                      &nerd_dictation::wake_word::WakeWordManager::wake_word,
+                      [](nerd_dictation::wake_word::WakeWordManager& self, const std::string& word) {
+                          self.set_wake_word(word);
+                      },
+                      "Current wake word")
+        .def("set_wake_word", &nerd_dictation::wake_word::WakeWordManager::set_wake_word,
+             py::arg("word"), py::arg("variants") = std::vector<std::string>{},
+             "Set wake word and optional variants")
+        .def_property_readonly("sample_rate", &nerd_dictation::wake_word::WakeWordManager::sample_rate,
+                               "Audio sample rate")
+        .def("get_error", &nerd_dictation::wake_word::WakeWordManager::get_error,
+             "Get last error message");
+
+    // Helper functions
+    wake_word.def("find_model", &nerd_dictation::wake_word::find_wake_word_model,
+                  "Find default Vosk model for wake word detection");
+    wake_word.def("model_exists", &nerd_dictation::wake_word::vosk_model_exists,
+                  py::arg("path"), "Check if Vosk model exists at path");
 #endif
 }
 #endif

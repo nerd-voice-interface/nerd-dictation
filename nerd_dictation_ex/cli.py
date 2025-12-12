@@ -126,8 +126,8 @@ class DictationDaemon:
         self._wake_word_model_path = os.path.expanduser(
             config.get("wake_word", {}).get("model_path", "~/.local/share/vosk/vosk-model-small-ru")
         )
-        self._vosk_model = None
-        self._vosk_recognizer = None
+        self._wake_word_variants = config.get("wake_word", {}).get("variants", ["записи"])
+        self._wake_word_module = None  # Нативный wake word модуль
         self._vad_module = None  # Нативный VAD модуль
         self._vad_iterator = None
         self._wake_word_thread: Optional[threading.Thread] = None
@@ -201,23 +201,34 @@ class DictationDaemon:
             traceback.print_exc()
             return False
 
-        # Загрузить Vosk small для wake word
+        # Загрузить нативный Vosk для wake word (C++ реализация)
         try:
-            from vosk import Model, KaldiRecognizer
-            print(f"Загрузка Vosk модели для wake word: {self._wake_word_model_path}...", file=sys.stderr)
+            from . import wake_word
+            print(f"Загрузка нативного Vosk для wake word: {self._wake_word_model_path}...", file=sys.stderr)
 
-            if not os.path.exists(self._wake_word_model_path):
-                print(f"Модель не найдена: {self._wake_word_model_path}", file=sys.stderr)
-                print("Скачайте: https://alphacephei.com/vosk/models", file=sys.stderr)
+            sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
+
+            # Инициализируем wake word manager
+            if not wake_word.init(
+                model_path=self._wake_word_model_path,
+                wake_word=self._wake_word,
+                variants=self._wake_word_variants,
+                sample_rate=sample_rate,
+                log_level=-1  # Тихий режим
+            ):
+                error = wake_word.get_error()
+                print(f"Ошибка инициализации wake word: {error}", file=sys.stderr)
+                if "not found" in error.lower():
+                    print("Скачайте: https://alphacephei.com/vosk/models", file=sys.stderr)
                 return False
 
-            self._vosk_model = Model(self._wake_word_model_path)
-            sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
-            self._vosk_recognizer = KaldiRecognizer(self._vosk_model, sample_rate)
-            print("Vosk модель для wake word загружена", file=sys.stderr)
+            self._wake_word_module = wake_word
+            print("Нативный Vosk для wake word загружен", file=sys.stderr)
             return True
         except Exception as e:
-            print(f"Ошибка загрузки Vosk модели: {e}", file=sys.stderr)
+            print(f"Ошибка загрузки нативного wake word: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
             return False
 
     def _start_wake_word_detection(self) -> None:
@@ -269,8 +280,8 @@ class DictationDaemon:
                         break
                 # НЕ вызываем _vad_iterator.reset_states() - вызывает heap corruption
                 # VAD состояние сбрасывается только в начале диктовки
-                if self._vosk_recognizer:
-                    self._vosk_recognizer.Reset()
+                if self._wake_word_module:
+                    self._wake_word_module.reset()
                 time.sleep(0.1)
                 continue
 
@@ -300,28 +311,26 @@ class DictationDaemon:
                         is_speech_active = False
                         speech_buffer += vad_chunk.tobytes()
 
-                        # Распознаём накопленную речь
-                        if speech_buffer:
-                            self._vosk_recognizer.AcceptWaveform(speech_buffer)
-                            result = json.loads(self._vosk_recognizer.Result())
-                            text = result.get("text", "").lower().strip()
+                        # Распознаём накопленную речь через нативный wake word manager
+                        if speech_buffer and self._wake_word_module:
+                            result = self._wake_word_module.process_speech(speech_buffer)
 
-                            if text:
-                                print(f"[wake word] распознано: '{text}'", file=sys.stderr)
+                            if result.text:
+                                print(f"[wake word] распознано: '{result.text}'", file=sys.stderr)
 
-                                # Проверяем на wake word (включая падежные формы)
-                                wake_words = [self._wake_word.lower(), "записи"]
-                                if any(w in text for w in wake_words):
+                                # Проверка на wake word уже сделана в нативном коде
+                                if result.detected:
                                     print(f"[wake word] активация по слову '{self._wake_word}'!", file=sys.stderr)
-                                    # НЕ вызываем reset_states() здесь - будет вызван в begin_dictation
-                                    self._vosk_recognizer.Reset()
+                                    # Сбросить состояние распознавателя
+                                    self._wake_word_module.reset()
                                     # Очистить аудио-буфер чтобы wake word не попал в диктовку
                                     with self._audio_buffer_lock:
                                         self._audio_buffer.clear()
                                     self.begin_dictation()
 
                         speech_buffer = b''
-                        self._vosk_recognizer.Reset()
+                        if self._wake_word_module:
+                            self._wake_word_module.reset()
                 elif is_speech_active:
                     speech_buffer += vad_chunk.tobytes()
 

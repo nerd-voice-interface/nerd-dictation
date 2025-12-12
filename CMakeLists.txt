@@ -107,6 +107,20 @@ else()
     set(ONNXRUNTIME_FOUND FALSE)
 endif()
 
+# Vosk (for wake word detection)
+find_library(VOSK_LIBRARY
+    NAMES vosk
+    PATHS /usr/lib /usr/local/lib
+)
+if(VOSK_LIBRARY)
+    message(STATUS "Vosk found: ${VOSK_LIBRARY}")
+    set(VOSK_FOUND TRUE)
+else()
+    message(WARNING "Vosk not found. Wake word detection will be disabled.")
+    message(WARNING "Install: sudo pacman -S vosk-api")
+    set(VOSK_FOUND FALSE)
+endif()
+
 # ============================================================================
 # Git Submodules from ThirdParty
 # ============================================================================
@@ -269,6 +283,11 @@ if(ONNXRUNTIME_FOUND)
     list(APPEND SOURCES ${SOURCE_DIR}/vad/vad_manager.cpp)
 endif()
 
+# Wake Word Manager (requires Vosk)
+if(VOSK_FOUND)
+    list(APPEND SOURCES ${SOURCE_DIR}/wake_word/wake_word_manager.cpp)
+endif()
+
 set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/types.hpp
     ${INCLUDE_DIR}/nerd_dictation/config.hpp
@@ -283,6 +302,11 @@ set(HEADERS
 # VAD Manager header (requires ONNX Runtime)
 if(ONNXRUNTIME_FOUND)
     list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/vad/vad_manager.hpp)
+endif()
+
+# Wake Word Manager header (requires Vosk)
+if(VOSK_FOUND)
+    list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/wake_word/wake_word_manager.hpp)
 endif()
 
 # ============================================================================
@@ -423,6 +447,12 @@ if(ONNXRUNTIME_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
     target_link_libraries(${PROJECT_NAME} PRIVATE ${ONNXRUNTIME_LIBRARY})
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME)
+endif()
+
+# Vosk (for wake word detection)
+if(VOSK_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${VOSK_LIBRARY})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK)
 endif()
 
 # ============================================================================
