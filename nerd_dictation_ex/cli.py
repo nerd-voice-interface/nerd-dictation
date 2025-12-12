@@ -417,7 +417,7 @@ class DictationDaemon:
     # VAD параметры для offline бэкендов (как в оригинальном GigaAM backend)
     VAD_THRESHOLD = 0.5  # Порог вероятности речи
     MIN_SILENCE_MS = 500  # Минимальная пауза для сегментации (мс)
-    MIN_SPEECH_MS = 250  # Минимальная длина речи (мс)
+    MIN_SPEECH_MS = 100  # Минимальная длина речи (мс)
     MAX_BUFFER_SECONDS = 25  # Максимум аудио в буфере
 
     def _dictation_loop(self) -> None:
