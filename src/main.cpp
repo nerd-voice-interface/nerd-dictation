@@ -15,6 +15,9 @@
 #include <csignal>
 #include <execinfo.h>
 #include <cstdlib>
+#include <sys/resource.h>
+#include <ctime>
+#include <fcntl.h>
 
 #ifdef HAVE_PYTHON
 #include <pybind11/embed.h>
@@ -130,12 +133,44 @@ static void crash_handler(int sig) {
     const char footer[] = "[nerd-dictation] End of backtrace\n";
     write(STDERR_FILENO, footer, sizeof(footer) - 1);
 
+    // Save crash report to file
+    const char* home = getenv("HOME");
+    if (home) {
+        char report_path[512];
+        time_t now = time(nullptr);
+        struct tm* t = localtime(&now);
+        snprintf(report_path, sizeof(report_path),
+                 "%s/.local/share/nerd-dictation/crash-%04d%02d%02d-%02d%02d%02d.log",
+                 home, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+                 t->tm_hour, t->tm_min, t->tm_sec);
+
+        int fd = open(report_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            write(fd, "Signal: ", 8);
+            write(fd, sig_name, strlen(sig_name));
+            write(fd, "\nBacktrace:\n", 12);
+            backtrace_symbols_fd(bt_buffer, bt_size, fd);
+            close(fd);
+
+            const char saved[] = "[nerd-dictation] Crash report saved to: ";
+            write(STDERR_FILENO, saved, sizeof(saved) - 1);
+            write(STDERR_FILENO, report_path, strlen(report_path));
+            write(STDERR_FILENO, "\n", 1);
+        }
+    }
+
     // Re-raise the signal to get core dump
     signal(sig, SIG_DFL);
     raise(sig);
 }
 
 static void install_crash_handler() {
+    // Enable core dumps (unlimited size)
+    struct rlimit core_limit;
+    core_limit.rlim_cur = RLIM_INFINITY;
+    core_limit.rlim_max = RLIM_INFINITY;
+    setrlimit(RLIMIT_CORE, &core_limit);
+
     struct sigaction sa;
     sa.sa_handler = crash_handler;
     sigemptyset(&sa.sa_mask);
