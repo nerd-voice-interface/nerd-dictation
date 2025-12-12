@@ -266,8 +266,8 @@ class DictationDaemon:
                         self._wake_word_queue.get_nowait()
                     except Empty:
                         break
-                if self._vad_iterator:
-                    self._vad_iterator.reset_states()
+                # НЕ вызываем _vad_iterator.reset_states() - вызывает heap corruption
+                # VAD состояние сбрасывается только в начале диктовки
                 if self._vosk_recognizer:
                     self._vosk_recognizer.Reset()
                 time.sleep(0.1)
@@ -315,7 +315,7 @@ class DictationDaemon:
                                 wake_words = [self._wake_word.lower(), "записи"]
                                 if any(w in text for w in wake_words):
                                     print(f"[wake word] активация по слову '{self._wake_word}'!", file=sys.stderr)
-                                    self._vad_iterator.reset_states()
+                                    # НЕ вызываем reset_states() здесь - будет вызван в begin_dictation
                                     self._vosk_recognizer.Reset()
                                     # Очистить аудио-буфер чтобы wake word не попал в диктовку
                                     with self._audio_buffer_lock:
