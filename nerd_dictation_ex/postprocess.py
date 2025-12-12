@@ -70,7 +70,10 @@ PUNCTUATION_MAP = {
 CAPITALIZE_AFTER = {".", "!", "?", "😊", "😂", "😎", "😢", "❤️", "🔥", "👍", "👌"}
 
 # Знаки перед которыми удаляется пробел
-NO_SPACE_BEFORE = {".", ",", ":", "!", "?", "—", "-", "...", "»", ")"}
+NO_SPACE_BEFORE = {".", ",", ":", "!", "?", "-", "...", "»", ")"}
+
+# Знаки перед которыми нужен пробел (русская типографика)
+SPACE_BEFORE = {"—"}
 
 
 class TextPostProcessor:
@@ -159,6 +162,11 @@ class TextPostProcessor:
         # Убираем пробелы перед знаками препинания
         for punct in NO_SPACE_BEFORE:
             text = text.replace(f" {punct}", punct)
+
+        # Добавляем пробел перед знаками где он нужен (русская типографика)
+        for punct in SPACE_BEFORE:
+            # Заменяем "X—" на "X —" (если перед тире не пробел)
+            text = re.sub(rf'(\S){re.escape(punct)}', rf'\1 {punct}', text)
 
         return text
 
