@@ -30,6 +30,7 @@
 #ifdef HAVE_VOSK
 #include "nerd_dictation/wake_word/wake_word_manager.hpp"
 #endif
+#include "nerd_dictation/postprocess/text_postprocessor.hpp"
 namespace py = pybind11;
 
 /* ============================================================================
@@ -249,6 +250,101 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
     wake_word.def("model_exists", &nerd_dictation::wake_word::vosk_model_exists,
                   py::arg("path"), "Check if Vosk model exists at path");
 #endif
+
+    // ==========================================================================
+    // Text Postprocessor submodule - replace words with punctuation/keys
+    // ==========================================================================
+    auto postprocess = m.def_submodule("postprocess",
+        "Text postprocessing: punctuation replacement, capitalization, key commands");
+
+    // TextAction class
+    py::class_<nerd_dictation::postprocess::TextAction>(postprocess, "TextAction")
+        .def(py::init<>())
+        .def(py::init<const std::string&>(), py::arg("text"))
+        .def_readwrite("text", &nerd_dictation::postprocess::TextAction::text,
+                       "Text to type")
+        .def("__repr__", [](const nerd_dictation::postprocess::TextAction& a) {
+            return "<TextAction text='" + a.text + "'>";
+        });
+
+    // KeyAction class
+    py::class_<nerd_dictation::postprocess::KeyAction>(postprocess, "KeyAction")
+        .def(py::init<>())
+        .def(py::init<const std::string&>(), py::arg("keys"))
+        .def_readwrite("keys", &nerd_dictation::postprocess::KeyAction::keys,
+                       "Key combination to press (xdotool format)")
+        .def("__repr__", [](const nerd_dictation::postprocess::KeyAction& a) {
+            return "<KeyAction keys='" + a.keys + "'>";
+        });
+
+    // PostprocessConfig class
+    py::class_<nerd_dictation::postprocess::PostprocessConfig>(postprocess, "PostprocessConfig")
+        .def(py::init<>())
+        .def_static("create_default", &nerd_dictation::postprocess::PostprocessConfig::create_default,
+                    "Create default Russian configuration")
+        .def_readwrite("key_map", &nerd_dictation::postprocess::PostprocessConfig::key_map,
+                       "Word -> key combination mappings")
+        .def_readwrite("punctuation_map", &nerd_dictation::postprocess::PostprocessConfig::punctuation_map,
+                       "Word -> punctuation mappings")
+        .def_readwrite("capitalize_after", &nerd_dictation::postprocess::PostprocessConfig::capitalize_after,
+                       "Characters after which to capitalize")
+        .def_readwrite("no_space_before", &nerd_dictation::postprocess::PostprocessConfig::no_space_before,
+                       "Characters before which to remove space")
+        .def_readwrite("space_before", &nerd_dictation::postprocess::PostprocessConfig::space_before,
+                       "Characters before which to add space");
+
+    // TextPostProcessor singleton
+    py::class_<nerd_dictation::postprocess::TextPostProcessor,
+               std::unique_ptr<nerd_dictation::postprocess::TextPostProcessor, py::nodelete>>(
+                   postprocess, "TextPostProcessor")
+        .def_static("instance", &nerd_dictation::postprocess::TextPostProcessor::instance,
+                    py::return_value_policy::reference,
+                    "Get singleton TextPostProcessor instance")
+        .def("process", [](nerd_dictation::postprocess::TextPostProcessor& self, const std::string& text) {
+            // Convert Action variants to Python-friendly format
+            auto actions = self.process(text);
+            py::list result;
+            for (const auto& action : actions) {
+                if (nerd_dictation::postprocess::is_text_action(action)) {
+                    result.append(nerd_dictation::postprocess::get_text_action(action));
+                } else {
+                    result.append(nerd_dictation::postprocess::get_key_action(action));
+                }
+            }
+            return result;
+        }, py::arg("text"),
+           "Process text: replace words with punctuation/keys, apply capitalization")
+        .def("reset", &nerd_dictation::postprocess::TextPostProcessor::reset,
+             "Reset state (start new dictation)")
+        .def("set_config", &nerd_dictation::postprocess::TextPostProcessor::set_config,
+             py::arg("config"), "Set new configuration");
+
+    // Helper functions
+    postprocess.def("process_text", [](const std::string& text) {
+        auto actions = nerd_dictation::postprocess::process_text(text);
+        py::list result;
+        for (const auto& action : actions) {
+            if (nerd_dictation::postprocess::is_text_action(action)) {
+                result.append(nerd_dictation::postprocess::get_text_action(action));
+            } else {
+                result.append(nerd_dictation::postprocess::get_key_action(action));
+            }
+        }
+        return result;
+    }, py::arg("text"),
+       "Process text using global postprocessor singleton");
+
+    postprocess.def("reset_processor", &nerd_dictation::postprocess::reset_processor,
+                    "Reset global postprocessor state");
+
+    // Helper to check action types from Python
+    postprocess.def("is_text_action", [](const py::object& obj) {
+        return py::isinstance<nerd_dictation::postprocess::TextAction>(obj);
+    }, py::arg("action"), "Check if action is TextAction");
+
+    postprocess.def("is_key_action", [](const py::object& obj) {
+        return py::isinstance<nerd_dictation::postprocess::KeyAction>(obj);
+    }, py::arg("action"), "Check if action is KeyAction");
 }
 #endif
 

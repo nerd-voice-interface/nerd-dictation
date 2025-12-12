@@ -1076,6 +1076,9 @@ def main():
     # list-backends
     subparsers.add_parser("list-backends", help="Показать доступные бэкенды")
 
+    # test-postprocess (для отладки)
+    subparsers.add_parser("test-postprocess", help="Тест постобработки текста")
+
     args = parser.parse_args()
     config = load_config()
 
@@ -1094,6 +1097,96 @@ def main():
         cmd_toggle(args, config)
     elif args.command == "list-backends":
         cmd_list_backends(args, config)
+    elif args.command == "test-postprocess":
+        cmd_test_postprocess()
+
+
+def cmd_test_postprocess():
+    """Тест постобработки текста."""
+    from nerd_dictation_ex import postprocess
+
+    print("=" * 50)
+    print("Testing postprocess native module")
+    print("=" * 50)
+
+    def test(name, text, expected_check):
+        """Run a single test."""
+        postprocess.reset_processor()
+        actions = postprocess.process_text(text)
+        print(f'\n{name}: "{text}"')
+        for a in actions:
+            print(f'  -> {a}')
+        try:
+            expected_check(actions)
+            print("  ✓ PASS")
+            return True
+        except AssertionError as e:
+            print(f"  ✗ FAIL: {e}")
+            return False
+
+    passed = 0
+    total = 0
+
+    # Test 1: Basic punctuation
+    total += 1
+    if test("Test 1 - Punctuation",
+            "привет запятая мир точка",
+            lambda a: (
+                a[0].text.startswith("Привет") and
+                "," in a[0].text and
+                "." in a[0].text
+            )):
+        passed += 1
+
+    # Test 2: Key action
+    total += 1
+    if test("Test 2 - Key action",
+            "привет выполнить мир",
+            lambda a: (
+                len(a) == 3 and
+                postprocess.is_text_action(a[0]) and
+                postprocess.is_key_action(a[1]) and
+                a[1].keys == "ctrl+Return" and
+                postprocess.is_text_action(a[2])
+            )):
+        passed += 1
+
+    # Test 3: Capitalization
+    total += 1
+    if test("Test 3 - Capitalization",
+            "это тест",
+            lambda a: a[0].text.startswith("Э")):  # Capitalized Э
+        passed += 1
+
+    # Test 4: Emoji
+    total += 1
+    if test("Test 4 - Emoji",
+            "привет смайлик улыбка",
+            lambda a: "😊" in a[0].text):
+        passed += 1
+
+    # Test 5: Multiple fragments
+    postprocess.reset_processor()
+    a1 = postprocess.process_text("первое точка")
+    a2 = postprocess.process_text("второе")
+    print(f'\nTest 5 - Multi-fragment: "первое точка" + "второе"')
+    for a in a1 + a2:
+        print(f'  -> {a}')
+    total += 1
+    try:
+        # Second fragment should be capitalized after period
+        assert a2[0].text.strip().startswith("В"), f"Expected 'В', got '{a2[0].text}'"
+        print("  ✓ PASS")
+        passed += 1
+    except AssertionError as e:
+        print(f"  ✗ FAIL: {e}")
+
+    print("\n" + "=" * 50)
+    print(f"Results: {passed}/{total} tests passed")
+    print("=" * 50)
+
+    if passed < total:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
