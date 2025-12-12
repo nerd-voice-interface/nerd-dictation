@@ -477,6 +477,9 @@ class DictationDaemon:
             )
             self._vad_model.eval()
 
+        # Сбрасываем состояние VAD в начале каждой сессии
+        self._vad_model.reset_states()
+
         # VAD состояние
         vad_chunk_samples = 512  # Silero VAD требует чанки по 512 samples
         vad_buffer = np.array([], dtype=np.int16)
@@ -498,7 +501,8 @@ class DictationDaemon:
             speech_samples = 0
             in_speech = False
             vad_buffer = np.array([], dtype=np.int16)
-            self._vad_model.reset_states()
+            # НЕ вызываем reset_states() - это вызывает heap corruption в torch
+            # Silero VAD корректно обрабатывает непрерывный поток без сброса
 
         # Минимум 0.5 секунды аудио для распознавания
         min_audio_bytes = int(0.5 * sample_rate * 2)
@@ -571,6 +575,8 @@ class DictationDaemon:
             import traceback
             traceback.print_exc()
         finally:
+            # Очищаем состояние VAD (только если он был использован)
+            reset_vad_state()
             self.backend.reset()
             self.state = DaemonState.IDLE
 
@@ -998,6 +1004,20 @@ def cmd_list_backends(args, config: dict) -> None:
 
 def _run_daemon(config: dict) -> None:
     """Запустить daemon (для systemd)."""
+    # Lockfile для предотвращения запуска нескольких экземпляров
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    lockfile_path = os.path.join(runtime_dir, "nerd-dictation-ex.lock")
+
+    try:
+        lockfile = open(lockfile_path, "w")
+        fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lockfile.write(str(os.getpid()))
+        lockfile.flush()
+    except (IOError, OSError) as e:
+        print(f"FATAL: Daemon уже запущен (lockfile: {lockfile_path})", file=sys.stderr)
+        print(f"Убейте существующий процесс или удалите lockfile.", file=sys.stderr)
+        sys.exit(1)
+
     daemon = DictationDaemon(config)
 
     def handle_signal(signum, frame):
