@@ -312,15 +312,16 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
             }
         }
         
-        // Also check single-byte characters (for fast check)
+        // Also check single-byte ASCII characters (for fast check)
+        // Note: Multi-byte UTF-8 chars like '»' are already checked in NO_SPACE_BEFORE above
         if (needs_space && !processed.empty()) {
             unsigned char first_byte = static_cast<unsigned char>(processed[0]);
-            // Check only ASCII characters
+            // Check only ASCII characters (first_byte < 128)
             if (first_byte < 128) {
                 char first_char = static_cast<char>(first_byte);
-                if (first_char == '.' || first_char == ',' || first_char == ':' || 
-                    first_char == '!' || first_char == '?' || first_char == '-' || 
-                    first_char == '»' || first_char == ')') {
+                if (first_char == '.' || first_char == ',' || first_char == ':' ||
+                    first_char == '!' || first_char == '?' || first_char == '-' ||
+                    first_char == ')') {
                     needs_space = false;
                 }
             }
@@ -344,12 +345,13 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
             }
         }
         
-        // Check single-byte punctuation
+        // Check single-byte ASCII punctuation
+        // Note: Multi-byte UTF-8 chars like '»' are already checked in NO_SPACE_BEFORE above
         if (!ends_with_punct && !processed.empty()) {
             char last_char = processed.back();
-            if (last_char == '.' || last_char == ',' || last_char == ':' || 
-                last_char == '!' || last_char == '?' || last_char == '-' || 
-                last_char == '»' || last_char == ')' || last_char == '\n') {
+            if (last_char == '.' || last_char == ',' || last_char == ':' ||
+                last_char == '!' || last_char == '?' || last_char == '-' ||
+                last_char == ')' || last_char == '\n') {
                 ends_with_punct = true;
             }
         }

@@ -38,7 +38,7 @@ Config load_config(const std::filesystem::path& config_path) {
         
         // [general]
         if (data.contains("general")) {
-            const auto& general = toml::find(data, "general");
+            const auto general = toml::find(data, "general");
             if (general.contains("backend")) {
                 config.backend = toml::find<std::string>(general, "backend");
             }
@@ -49,7 +49,7 @@ Config load_config(const std::filesystem::path& config_path) {
         
         // [audio]
         if (data.contains("audio")) {
-            const auto& audio = toml::find(data, "audio");
+            const auto audio = toml::find(data, "audio");
             if (audio.contains("source")) {
                 config.audio.source = toml::find<std::string>(audio, "source");
             }
@@ -63,12 +63,12 @@ Config load_config(const std::filesystem::path& config_path) {
         
         // [dummy] or [vosk] or [gigaam] - model_path
         if (data.contains("dummy")) {
-            const auto& dummy = toml::find(data, "dummy");
+            const auto dummy = toml::find(data, "dummy");
             if (dummy.contains("model_path")) {
                 config.model_path = toml::find<std::string>(dummy, "model_path");
             }
         } else if (data.contains("vosk")) {
-            const auto& vosk = toml::find(data, "vosk");
+            const auto vosk = toml::find(data, "vosk");
             if (vosk.contains("model_path")) {
                 std::string path = toml::find<std::string>(vosk, "model_path");
                 // Expand ~
@@ -84,7 +84,7 @@ Config load_config(const std::filesystem::path& config_path) {
         
         // [wake_word] - wake word detection settings
         if (data.contains("wake_word")) {
-            const auto& wake_word = toml::find(data, "wake_word");
+            const auto wake_word = toml::find(data, "wake_word");
             if (wake_word.contains("enabled")) {
                 config.wake_word.enabled = toml::find<bool>(wake_word, "enabled");
             }

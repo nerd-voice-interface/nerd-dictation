@@ -274,8 +274,8 @@ private:
     bool needs_resampling_ = false;
 
     // Frame sizes (samples per 10ms)
-    int input_frame_size_ = 160;   // default for 16kHz
-    int process_frame_size_ = 160; // 16kHz * 10ms
+    size_t input_frame_size_ = 160;   // default for 16kHz
+    size_t process_frame_size_ = 160; // 16kHz * 10ms
 
     // Resampler states
     SRC_STATE* src_state_up_ = nullptr;
