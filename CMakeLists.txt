@@ -51,6 +51,7 @@ set(THIRDPARTY_DIR "${CMAKE_SOURCE_DIR}/ThirdParty")
 # ============================================================================
 
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
 
 # PipeWire
 pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
@@ -253,6 +254,78 @@ else()
     message(FATAL_ERROR "  git submodule update --init --recursive")
 endif()
 
+# JamSpell (context-aware spell correction)
+# Note: We build JamSpell sources directly to avoid CMake conflicts with their global flags
+option(ENABLE_JAMSPELL "Enable JamSpell spell correction" ON)
+if(ENABLE_JAMSPELL AND EXISTS "${THIRDPARTY_DIR}/jamspell")
+    message(STATUS "Using JamSpell from ThirdParty submodule")
+
+    set(JAMSPELL_DIR "${THIRDPARTY_DIR}/jamspell")
+
+    # Build cityhash library
+    add_library(jamspell_cityhash STATIC
+        ${JAMSPELL_DIR}/contrib/cityhash/city.cc
+    )
+    target_include_directories(jamspell_cityhash PUBLIC
+        ${JAMSPELL_DIR}/contrib/cityhash
+    )
+    set_target_properties(jamspell_cityhash PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_STANDARD 11
+    )
+
+    # Build phf (perfect hash function) library
+    add_library(jamspell_phf STATIC
+        ${JAMSPELL_DIR}/contrib/phf/phf.cc
+    )
+    target_include_directories(jamspell_phf PUBLIC
+        ${JAMSPELL_DIR}/contrib/phf
+    )
+    # Disable pedantic warnings for non-standard label address usage
+    target_compile_options(jamspell_phf PRIVATE -Wno-pedantic -Wno-implicit-fallthrough)
+    set_target_properties(jamspell_phf PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_STANDARD 11
+    )
+
+    # Build main JamSpell library
+    add_library(jamspell_lib STATIC
+        ${JAMSPELL_DIR}/jamspell/spell_corrector.cpp
+        ${JAMSPELL_DIR}/jamspell/lang_model.cpp
+        ${JAMSPELL_DIR}/jamspell/utils.cpp
+        ${JAMSPELL_DIR}/jamspell/perfect_hash.cpp
+        ${JAMSPELL_DIR}/jamspell/bloom_filter.cpp
+    )
+    target_include_directories(jamspell_lib PUBLIC
+        ${JAMSPELL_DIR}
+        ${JAMSPELL_DIR}/contrib
+    )
+    target_link_libraries(jamspell_lib
+        PUBLIC jamspell_phf jamspell_cityhash
+        PRIVATE Threads::Threads
+    )
+    # JamSpell needs uint64_t from <cstdint>, force-include it
+    # Also disable pedantic warnings for non-standard label address usage
+    target_compile_options(jamspell_lib PRIVATE
+        -include cstdint
+        -Wno-pedantic
+    )
+    set_target_properties(jamspell_lib PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_STANDARD 11
+    )
+
+    set(JAMSPELL_FOUND TRUE)
+else()
+    if(ENABLE_JAMSPELL)
+        message(WARNING "JamSpell not found. Spell correction will be disabled.")
+        message(WARNING "Initialize submodule:")
+        message(WARNING "  git submodule add https://github.com/bakwc/JamSpell.git ThirdParty/jamspell")
+        message(WARNING "  git submodule update --init --recursive")
+    endif()
+    set(JAMSPELL_FOUND FALSE)
+endif()
+
 # ============================================================================
 # Project Structure
 # ============================================================================
@@ -289,6 +362,11 @@ if(VOSK_FOUND)
     list(APPEND SOURCES ${SOURCE_DIR}/wake_word/wake_word_manager.cpp)
 endif()
 
+# Spell Corrector (requires JamSpell)
+if(JAMSPELL_FOUND)
+    list(APPEND SOURCES ${SOURCE_DIR}/spelling/spell_corrector.cpp)
+endif()
+
 set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/types.hpp
     ${INCLUDE_DIR}/nerd_dictation/config.hpp
@@ -309,6 +387,11 @@ endif()
 # Wake Word Manager header (requires Vosk)
 if(VOSK_FOUND)
     list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/wake_word/wake_word_manager.hpp)
+endif()
+
+# Spell Corrector header (requires JamSpell)
+if(JAMSPELL_FOUND)
+    list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/spelling/spell_corrector.hpp)
 endif()
 
 # ============================================================================
@@ -457,6 +540,12 @@ if(VOSK_FOUND)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK)
 endif()
 
+# JamSpell (for spell correction)
+if(JAMSPELL_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE jamspell_lib)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_JAMSPELL)
+endif()
+
 # ============================================================================
 # Installation
 # ============================================================================
@@ -578,6 +667,13 @@ if(VOSK_LIBRARY)
     message(STATUS "  Vosk: ENABLED (${VOSK_LIBRARY})")
 else()
     message(STATUS "  Vosk: DISABLED (library not found)")
+endif()
+message(STATUS "")
+message(STATUS "Spell Correction:")
+if(JAMSPELL_FOUND)
+    message(STATUS "  JamSpell: ENABLED (context-aware n-gram spell correction)")
+else()
+    message(STATUS "  JamSpell: DISABLED (submodule not found)")
 endif()
 message(STATUS "")
 message(STATUS "ASR Backends (loaded via dlopen at runtime):")

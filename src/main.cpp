@@ -32,6 +32,9 @@
 #endif
 #include "nerd_dictation/postprocess/text_postprocessor.hpp"
 #include "nerd_dictation/audio/audio_preprocessor.hpp"
+#ifdef HAVE_JAMSPELL
+#include "nerd_dictation/spelling/spell_corrector.hpp"
+#endif
 namespace py = pybind11;
 
 /* ============================================================================
@@ -415,6 +418,59 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
             return output;
         }, py::arg("samples"),
            "Process audio samples (list of int16)");
+
+#ifdef HAVE_JAMSPELL
+    // ==========================================================================
+    // Spell Correction submodule - JamSpell context-aware spell correction
+    // ==========================================================================
+    auto spelling = m.def_submodule("spelling",
+        "Spell correction using JamSpell context-aware n-gram model");
+
+    // SpellCorrectorConfig class
+    py::class_<nerd_dictation::spelling::SpellCorrectorConfig>(spelling, "SpellCorrectorConfig")
+        .def(py::init<>())
+        .def_readwrite("model_path",
+                       &nerd_dictation::spelling::SpellCorrectorConfig::model_path,
+                       "Path to JamSpell model file (.bin)")
+        .def_readwrite("known_words_penalty",
+                       &nerd_dictation::spelling::SpellCorrectorConfig::known_words_penalty,
+                       "Penalty for known words (higher = less likely to correct)")
+        .def_readwrite("unknown_words_penalty",
+                       &nerd_dictation::spelling::SpellCorrectorConfig::unknown_words_penalty,
+                       "Penalty for unknown words (higher = more likely to correct)")
+        .def_readwrite("max_candidates",
+                       &nerd_dictation::spelling::SpellCorrectorConfig::max_candidates,
+                       "Maximum candidates to check per word");
+
+    // SpellCorrector class
+    py::class_<nerd_dictation::spelling::SpellCorrector>(spelling, "SpellCorrector")
+        .def(py::init<>())
+        .def(py::init<const std::string&>(), py::arg("model_path"),
+             "Create spell corrector and load model from path")
+        .def(py::init<const nerd_dictation::spelling::SpellCorrectorConfig&>(),
+             py::arg("config"), "Create spell corrector with configuration")
+        .def("load_model", &nerd_dictation::spelling::SpellCorrector::load_model,
+             py::arg("model_path"), "Load JamSpell model from file")
+        .def("is_loaded", &nerd_dictation::spelling::SpellCorrector::is_loaded,
+             "Check if model is loaded")
+        .def("correct", &nerd_dictation::spelling::SpellCorrector::correct,
+             py::arg("text"), "Correct text using loaded model (UTF-8)")
+        .def("word_is_known", &nerd_dictation::spelling::SpellCorrector::word_is_known,
+             py::arg("word"), "Check if word is in vocabulary")
+        .def("set_penalties", &nerd_dictation::spelling::SpellCorrector::set_penalties,
+             py::arg("known_penalty"), py::arg("unknown_penalty"),
+             "Set correction penalties")
+        .def_property_readonly("config",
+                               &nerd_dictation::spelling::SpellCorrector::config,
+                               "Get current configuration");
+
+    // Module-level flag to check if JamSpell is available
+    spelling.attr("available") = true;
+#else
+    // Stub module when JamSpell is not compiled
+    auto spelling = m.def_submodule("spelling", "Spell correction (NOT AVAILABLE)");
+    spelling.attr("available") = false;
+#endif
 }
 #endif
 

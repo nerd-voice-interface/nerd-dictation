@@ -36,10 +36,12 @@ from typing import Optional, Generator
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 SOCKET_PATH = RUNTIME_DIR / "nerd-dictation-ex.sock"
 PID_FILE = RUNTIME_DIR / "nerd-dictation-ex.pid"
+LOCK_PATH = RUNTIME_DIR / "nerd-dictation-ex.lock"  # flock для предотвращения дублирования
 COOKIE_PATH = Path("/tmp/nerd-dictation-ex.cookie")
 
 CONFIG_DIRS = [
-    Path.home() / ".config" / "nerd-dictation-ex",
+    Path.home() / ".config" / "nerd-dictation",      # Primary config location
+    Path.home() / ".config" / "nerd-dictation-ex",   # Legacy location
     Path(__file__).parent.parent.parent.parent / "config",  # Для dev-режима
 ]
 
@@ -136,6 +138,29 @@ class DictationDaemon:
         # Noise reduction
         from .noise_reduction import create_noise_reducer
         self._noise_reducer = create_noise_reducer(config)
+
+        # Spell correction (JamSpell)
+        self._spell_corrector = None
+        spell_config = config.get("spell_correction", {})
+        if spell_config.get("enabled", False):
+            try:
+                from . import spelling
+                if spelling.is_available():
+                    model_path = os.path.expanduser(
+                        spell_config.get("model_path", "~/.local/share/jamspell/ru.bin")
+                    )
+                    known_penalty = spell_config.get("known_words_penalty", 20.0)
+                    unknown_penalty = spell_config.get("unknown_words_penalty", 5.0)
+
+                    if spelling.init(model_path, known_penalty, unknown_penalty):
+                        self._spell_corrector = spelling
+                        print(f"Spell correction включено: {model_path}", file=sys.stderr)
+                    else:
+                        print("Spell correction: не удалось загрузить модель", file=sys.stderr)
+                else:
+                    print("Spell correction: JamSpell не скомпилирован", file=sys.stderr)
+            except Exception as e:
+                print(f"Spell correction: ошибка инициализации: {e}", file=sys.stderr)
 
     def load_backend(self, backend_name: str = None) -> None:
         """Загрузить бэкенд и модель в память."""
@@ -412,6 +437,13 @@ class DictationDaemon:
         from .input import type_text, press_keys
         from .postprocess import process_text, TextAction, KeyAction
         from .sounds import play_execute
+
+        # Apply spell correction before postprocessing
+        if self._spell_corrector and self._spell_corrector.is_initialized():
+            corrected = self._spell_corrector.correct(text)
+            if corrected != text:
+                print(f"[spell] '{text}' -> '{corrected}'", file=sys.stderr)
+                text = corrected
 
         actions = process_text(text)
         for action in actions:
@@ -897,14 +929,30 @@ def _cmd_begin_direct(args, config: dict) -> None:
     from .input import type_text
     from .sounds import play_begin, play_end
 
+    # ========================================================================
+    # Проверка flock — предотвращает запуск если daemon или другой direct mode
+    # работает (даже во время загрузки модели, до создания socket)
+    # ========================================================================
+    try:
+        lockfile = open(LOCK_PATH, "w")
+        fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lockfile.write(str(os.getpid()))
+        lockfile.flush()
+    except (IOError, OSError):
+        print(f"FATAL: Другой экземпляр nerd-dictation уже работает.", file=sys.stderr)
+        print(f"(lockfile: {LOCK_PATH})", file=sys.stderr)
+        sys.exit(1)
+
     # Проверка: если daemon запущен — не запускать direct mode
     if DaemonClient.is_running():
         print("Daemon уже запущен! Используйте daemon для диктовки.", file=sys.stderr)
         print("Команда: nerd-dictation begin", file=sys.stderr)
+        lockfile.close()  # Освобождаем lock
         sys.exit(1)
 
     if COOKIE_PATH.exists():
         print("Диктовка уже запущена. Используйте 'end' или 'cancel'.", file=sys.stderr)
+        lockfile.close()  # Освобождаем lock
         sys.exit(1)
 
     backend_name = getattr(args, 'backend', None) or config.get("general", {}).get("backend", "vosk")
@@ -1019,16 +1067,14 @@ def cmd_list_backends(args, config: dict) -> None:
 def _run_daemon(config: dict) -> None:
     """Запустить daemon (для systemd)."""
     # Lockfile для предотвращения запуска нескольких экземпляров
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    lockfile_path = os.path.join(runtime_dir, "nerd-dictation-ex.lock")
-
+    # Используем глобальную константу LOCK_PATH для единообразия с direct mode
     try:
-        lockfile = open(lockfile_path, "w")
+        lockfile = open(LOCK_PATH, "w")
         fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         lockfile.write(str(os.getpid()))
         lockfile.flush()
-    except (IOError, OSError) as e:
-        print(f"FATAL: Daemon уже запущен (lockfile: {lockfile_path})", file=sys.stderr)
+    except (IOError, OSError):
+        print(f"FATAL: Daemon уже запущен (lockfile: {LOCK_PATH})", file=sys.stderr)
         print(f"Убейте существующий процесс или удалите lockfile.", file=sys.stderr)
         sys.exit(1)
 

@@ -18,6 +18,13 @@ struct WakeWordConfig {
     std::string model_path = "~/.local/share/vosk/vosk-model-small-ru";
 };
 
+struct SpellCorrectionConfig {
+    bool enabled = true;
+    std::string model_path = "~/.local/share/jamspell/ru.bin";  // JamSpell model
+    double known_words_penalty = 20.0;
+    double unknown_words_penalty = 5.0;
+};
+
 struct Config {
     std::string backend = "dummy";
     std::string input_method = "xdotool";  /* Default xdotool, as in original */
@@ -31,6 +38,9 @@ struct Config {
 
     /* Wake word detection */
     WakeWordConfig wake_word;
+
+    /* Spell correction (JamSpell) */
+    SpellCorrectionConfig spell_correction;
 };
 
 /**

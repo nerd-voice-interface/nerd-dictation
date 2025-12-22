@@ -103,7 +103,32 @@ Config load_config(const std::filesystem::path& config_path) {
                 config.wake_word.model_path = path;
             }
         }
-        
+
+        // [spell_correction] - JamSpell spell correction settings
+        if (data.contains("spell_correction")) {
+            const auto spell = toml::find(data, "spell_correction");
+            if (spell.contains("enabled")) {
+                config.spell_correction.enabled = toml::find<bool>(spell, "enabled");
+            }
+            if (spell.contains("model_path")) {
+                std::string path = toml::find<std::string>(spell, "model_path");
+                // Expand ~
+                if (!path.empty() && path.front() == '~') {
+                    const char* home = std::getenv("HOME");
+                    if (home) {
+                        path = std::string(home) + path.substr(1);
+                    }
+                }
+                config.spell_correction.model_path = path;
+            }
+            if (spell.contains("known_words_penalty")) {
+                config.spell_correction.known_words_penalty = toml::find<double>(spell, "known_words_penalty");
+            }
+            if (spell.contains("unknown_words_penalty")) {
+                config.spell_correction.unknown_words_penalty = toml::find<double>(spell, "unknown_words_penalty");
+            }
+        }
+
         spdlog::info("Configuration loaded from: {}", config_path.string());
         
     } catch (const std::exception& e) {

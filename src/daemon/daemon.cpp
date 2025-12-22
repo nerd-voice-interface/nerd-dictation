@@ -3,11 +3,16 @@
 #include "nerd_dictation/input/input_simulator.hpp"
 #include "nerd_dictation/input/postprocess.hpp"
 #include "nerd_dictation/sounds/sounds.hpp"
+#ifdef HAVE_JAMSPELL
+#include "nerd_dictation/spelling/spell_corrector.hpp"
+#endif
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <cstring>
 #include <sstream>
 #include <fstream>
@@ -116,6 +121,27 @@ DictationDaemon::DictationDaemon(const Config& config) : config_(config) {
         audio_preprocessor_.reset();
     }
 
+#ifdef HAVE_JAMSPELL
+    /* Initialize spell corrector (JamSpell) */
+    if (config_.spell_correction.enabled) {
+        std::string spell_model_path = expand_path(config_.spell_correction.model_path);
+
+        spelling::SpellCorrectorConfig spell_config;
+        spell_config.model_path = spell_model_path;
+        spell_config.known_words_penalty = config_.spell_correction.known_words_penalty;
+        spell_config.unknown_words_penalty = config_.spell_correction.unknown_words_penalty;
+
+        spell_corrector_ = std::make_unique<spelling::SpellCorrector>(spell_config);
+
+        if (spell_corrector_->is_loaded()) {
+            spdlog::info("Spell corrector initialized: {}", spell_model_path);
+        } else {
+            spdlog::warn("Spell corrector model not loaded, continuing without spell correction");
+            spell_corrector_.reset();
+        }
+    }
+#endif
+
     spdlog::info("Daemon initialized, socket: {}", socket_path_);
 }
 
@@ -150,8 +176,21 @@ DictationDaemon::~DictationDaemon() {
 }
 
 void DictationDaemon::process_and_type(const std::string& text) {
+    std::string processed_text = text;
+
+#ifdef HAVE_JAMSPELL
+    /* Apply spell correction if available */
+    if (spell_corrector_ && spell_corrector_->is_loaded()) {
+        std::string corrected = spell_corrector_->correct(text);
+        if (corrected != text) {
+            spdlog::debug("Spell corrected: '{}' -> '{}'", text, corrected);
+            processed_text = corrected;
+        }
+    }
+#endif
+
     input::TextPostProcessor processor;
-    auto actions = processor.process(text);
+    auto actions = processor.process(processed_text);
 
     input::InputSimulator input_sim(config_.input_method);
 
@@ -355,6 +394,42 @@ void DictationDaemon::socket_server_loop() {
 }
 
 void DictationDaemon::run() {
+    /* ========================================================================
+     * Process singleton lock - prevent multiple daemon instances
+     * Uses the same lock file as Python cli.py for compatibility
+     * ======================================================================== */
+    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
+    std::string lock_path = runtime_dir ?
+        std::string(runtime_dir) + "/nerd-dictation.lock" :
+        "/tmp/nerd-dictation.lock";
+
+    int lock_fd = open(lock_path.c_str(), O_WRONLY | O_CREAT, 0644);
+    if (lock_fd < 0) {
+        spdlog::error("Failed to open lock file: {}", lock_path);
+        return;
+    }
+
+    /* Try to acquire exclusive non-blocking lock */
+    if (flock(lock_fd, LOCK_EX | LOCK_NB) < 0) {
+        if (errno == EWOULDBLOCK) {
+            spdlog::error("FATAL: Daemon already running (lock held: {})", lock_path);
+            spdlog::error("Kill existing process or remove lock file.");
+        } else {
+            spdlog::error("Failed to acquire lock: {}", strerror(errno));
+        }
+        close(lock_fd);
+        return;
+    }
+
+    /* Write PID to lock file */
+    ftruncate(lock_fd, 0);
+    std::string pid_str = std::to_string(getpid());
+    write(lock_fd, pid_str.c_str(), pid_str.length());
+
+    spdlog::info("Process lock acquired: {} (PID: {})", lock_path, getpid());
+
+    /* ======================================================================== */
+
     /* Initialize sound system */
     sounds::init_sounds();
 
@@ -369,6 +444,11 @@ void DictationDaemon::run() {
     /* Start socket server */
     socket_thread_ = std::thread(&DictationDaemon::socket_server_loop, this);
     socket_thread_.join();
+
+    /* Release lock on exit (also happens automatically when process dies) */
+    flock(lock_fd, LOCK_UN);
+    close(lock_fd);
+    unlink(lock_path.c_str());
 }
 
 std::string DictationDaemon::get_backend_name() const {

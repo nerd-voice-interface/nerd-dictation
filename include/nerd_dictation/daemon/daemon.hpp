@@ -3,6 +3,9 @@
 #include "nerd_dictation/config.hpp"
 #include "nerd_dictation/backend_wrapper.hpp"
 #include "nerd_dictation/audio/audio_preprocessor.hpp"
+#ifdef HAVE_JAMSPELL
+#include "nerd_dictation/spelling/spell_corrector.hpp"
+#endif
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -66,6 +69,11 @@ private:
     /* Audio preprocessing (AGC + noise suppression) */
     std::unique_ptr<audio::AudioPreprocessor> audio_preprocessor_;
     std::vector<int16_t> preprocessed_buffer_;
+
+#ifdef HAVE_JAMSPELL
+    /* Spell correction (JamSpell) */
+    std::unique_ptr<spelling::SpellCorrector> spell_corrector_;
+#endif
 
     /* Wake word detection (uses t-one backend) */
     bool wake_word_enabled_ = true;
