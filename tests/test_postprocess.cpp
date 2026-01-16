@@ -110,7 +110,7 @@ TEST_F(PostProcessTest, KeyCommandExecute) {
 }
 
 TEST_F(PostProcessTest, KeyCommandVariants) {
-    std::vector<std::string> variants = {"выполнять", "выполняй", "выполни"};
+    std::vector<std::string> variants = {"выполнять", "выполняй", "выполни", "выполнял", "выполнил"};
     for (const auto& variant : variants) {
         auto actions = processor_.process(variant);
         ASSERT_EQ(actions.size(), 1) << "Failed for variant: " << variant;

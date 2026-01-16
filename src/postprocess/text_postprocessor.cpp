@@ -355,6 +355,8 @@ PostprocessConfig PostprocessConfig::create_default() {
         {"выполнять", "ctrl+Return"},
         {"выполняй", "ctrl+Return"},
         {"выполни", "ctrl+Return"},
+        {"выполнял", "ctrl+Return"},
+	{"выполнил", "ctrl+Return"},
     };
 
     // Words -> punctuation marks

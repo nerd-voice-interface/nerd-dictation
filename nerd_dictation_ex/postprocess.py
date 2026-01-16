@@ -70,6 +70,8 @@ KEY_MAP = {
     "выполнять": "ctrl+Return",
     "выполняй": "ctrl+Return",
     "выполни": "ctrl+Return",
+    "выполнил": "ctrl+Return",
+    "выполнял": "ctrl+Return",
 }
 
 PUNCTUATION_MAP = {

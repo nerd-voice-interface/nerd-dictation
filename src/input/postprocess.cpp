@@ -15,6 +15,8 @@ static const std::map<std::string, std::string> KEY_MAP = {
     {"выполнять", "ctrl+Return"},
     {"выполняй", "ctrl+Return"},
     {"выполни", "ctrl+Return"},
+    {"выполнял", "ctrl+Return"},
+    {"выполнил", "ctrl+Return"},
 };
 
 // Words → punctuation marks (Russian commands)
