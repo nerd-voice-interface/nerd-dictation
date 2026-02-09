@@ -21,7 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation %t
+ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation %h/.local/share/jamspell %t
 
 # Resource limits
 MemoryMax=2G
