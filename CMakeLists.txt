@@ -523,7 +523,7 @@ if(PYBIND11_FOUND)
     # Set Python scripts directory and venv path
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         PYTHON_SCRIPTS_DIR="${CMAKE_SOURCE_DIR}"
-        PYTHON_VENV_SITE_PACKAGES="${CMAKE_SOURCE_DIR}/.venv/lib/python3.13/site-packages"
+        PYTHON_VENV_SITE_PACKAGES="${CMAKE_SOURCE_DIR}/.venv/lib/python3.14/site-packages"
     )
 endif()
 
