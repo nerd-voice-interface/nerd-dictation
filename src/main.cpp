@@ -57,8 +57,10 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def(py::init<const std::string&>(), py::arg("method"),
              "Create input simulator with specified method (xdotool, ydotool, wtype, dotool, stdout)")
         .def("type_text", &nerd_dictation::input::InputSimulator::type_text,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("text"), "Type text using configured method")
         .def("press_keys", &nerd_dictation::input::InputSimulator::press_keys,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("keys"), "Press key combination (e.g., 'ctrl+Return')");
 
     // ASR Result class
@@ -102,21 +104,28 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def("sample_rate", &nerd_dictation::Backend::sample_rate,
              "Get expected sample rate")
         .def("feed", [](nerd_dictation::Backend& self, py::bytes data) {
+            // Копируем, чтобы отпустить GIL: py::bytes нельзя трогать без него
             std::string_view sv = data;
-            const int16_t* samples = reinterpret_cast<const int16_t*>(sv.data());
-            size_t num_samples = sv.size() / sizeof(int16_t);
-            self.feed(samples, num_samples);
+            const int16_t* begin = reinterpret_cast<const int16_t*>(sv.data());
+            std::vector<int16_t> samples(begin, begin + sv.size() / sizeof(int16_t));
+            py::gil_scoped_release unlock;
+            self.feed(samples.data(), samples.size());
         }, py::arg("audio_bytes"),
            "Feed audio data (raw int16 PCM bytes)")
         .def("feed_samples", [](nerd_dictation::Backend& self, const std::vector<int16_t>& samples) {
+            py::gil_scoped_release unlock;
             self.feed(samples);
         }, py::arg("samples"),
            "Feed audio samples (list of int16)")
         .def("result", &nerd_dictation::Backend::result,
+             py::call_guard<py::gil_scoped_release>(),
              "Get current result")
+        // Инференс идёт секунды: удерживать GIL значит остановить приём аудио
         .def("finalize", &nerd_dictation::Backend::finalize,
+             py::call_guard<py::gil_scoped_release>(),
              "Finalize and get final result")
         .def("reset", &nerd_dictation::Backend::reset,
+             py::call_guard<py::gil_scoped_release>(),
              "Reset state for new session")
         .def("get_error", &nerd_dictation::Backend::get_error,
              "Get last error message")
@@ -151,32 +160,43 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def_static("instance", &nerd_dictation::vad::VADManager::instance,
                     py::return_value_policy::reference,
                     "Get singleton VADManager instance")
+        // Все методы ниже берут VADManager::mutex_, который process_chunk
+        // удерживает весь ORT-инференс уже без GIL. Держать здесь GIL значит
+        // ждать этот мьютекс с GIL в руках и останавливать все потоки Python.
         .def("init", &nerd_dictation::vad::VADManager::init,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("config"), "Initialize VAD with configuration")
         .def("is_initialized", &nerd_dictation::vad::VADManager::is_initialized,
+             py::call_guard<py::gil_scoped_release>(),
              "Check if VAD is initialized")
         .def("process_chunk", [](nerd_dictation::vad::VADManager& self, py::bytes data) {
             std::string_view sv = data;
-            const int16_t* samples = reinterpret_cast<const int16_t*>(sv.data());
-            size_t num_samples = sv.size() / sizeof(int16_t);
-            return self.process_chunk(samples, num_samples);
+            const int16_t* begin = reinterpret_cast<const int16_t*>(sv.data());
+            std::vector<int16_t> samples(begin, begin + sv.size() / sizeof(int16_t));
+            py::gil_scoped_release unlock;
+            return self.process_chunk(samples);
         }, py::arg("audio_bytes"),
            "Process audio chunk (raw int16 PCM bytes) and get VAD result")
         .def("process_chunk_samples", [](nerd_dictation::vad::VADManager& self, const std::vector<int16_t>& samples) {
+            py::gil_scoped_release unlock;
             return self.process_chunk(samples);
         }, py::arg("samples"),
            "Process audio samples (list of int16) and get VAD result")
         .def("reset_states", &nerd_dictation::vad::VADManager::reset_states,
+             py::call_guard<py::gil_scoped_release>(),
              "Reset internal states for new session")
         .def_property("threshold",
                       &nerd_dictation::vad::VADManager::threshold,
-                      &nerd_dictation::vad::VADManager::set_threshold,
+                      // сеттер берёт mutex_, геттер — нет
+                      py::cpp_function(&nerd_dictation::vad::VADManager::set_threshold,
+                                       py::call_guard<py::gil_scoped_release>()),
                       "Speech detection threshold (0.0-1.0)")
         .def_property_readonly("sample_rate", &nerd_dictation::vad::VADManager::sample_rate,
                                "Sample rate (8000 or 16000)")
         .def_property_readonly("chunk_size", &nerd_dictation::vad::VADManager::chunk_size,
                                "Required chunk size in samples (512 for 16kHz, 256 for 8kHz)")
         .def("get_error", &nerd_dictation::vad::VADManager::get_error,
+             py::call_guard<py::gil_scoped_release>(),
              "Get last error message");
 
     // Helper function to find default model
@@ -218,21 +238,30 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def_static("instance", &nerd_dictation::wake_word::WakeWordManager::instance,
                     py::return_value_policy::reference,
                     "Get singleton WakeWordManager instance")
+        // Как и у VADManager: эти методы берут mutex_, который process_speech
+        // держит весь инференс Vosk уже без GIL
         .def("init", &nerd_dictation::wake_word::WakeWordManager::init,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("config"), "Initialize with configuration")
         .def("is_initialized", &nerd_dictation::wake_word::WakeWordManager::is_initialized,
+             py::call_guard<py::gil_scoped_release>(),
              "Check if manager is initialized")
         .def("process_speech", [](nerd_dictation::wake_word::WakeWordManager& self, py::bytes data) {
             std::string_view sv = data;
-            return self.process_speech(reinterpret_cast<const uint8_t*>(sv.data()), sv.size());
+            const uint8_t* begin = reinterpret_cast<const uint8_t*>(sv.data());
+            std::vector<uint8_t> audio(begin, begin + sv.size());
+            py::gil_scoped_release unlock;
+            return self.process_speech(audio.data(), audio.size());
         }, py::arg("audio_bytes"),
            "Process speech audio and check for wake word")
         .def("process_speech_samples", [](nerd_dictation::wake_word::WakeWordManager& self,
                                           const std::vector<int16_t>& samples) {
+            py::gil_scoped_release unlock;
             return self.process_speech(samples);
         }, py::arg("samples"),
            "Process speech samples (list of int16)")
         .def("reset", &nerd_dictation::wake_word::WakeWordManager::reset,
+             py::call_guard<py::gil_scoped_release>(),
              "Reset recognizer state")
         .def_property("wake_word",
                       &nerd_dictation::wake_word::WakeWordManager::wake_word,
@@ -241,11 +270,13 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
                       },
                       "Current wake word")
         .def("set_wake_word", &nerd_dictation::wake_word::WakeWordManager::set_wake_word,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("word"), py::arg("variants") = std::vector<std::string>{},
              "Set wake word and optional variants")
         .def_property_readonly("sample_rate", &nerd_dictation::wake_word::WakeWordManager::sample_rate,
                                "Audio sample rate")
         .def("get_error", &nerd_dictation::wake_word::WakeWordManager::get_error,
+             py::call_guard<py::gil_scoped_release>(),
              "Get last error message");
 
     // Helper functions
