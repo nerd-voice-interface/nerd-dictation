@@ -1,7 +1,7 @@
 [Unit]
 Description=nerd-dictation daemon
 Documentation=https://github.com/marcusmae/nerd-dictation
-After=pipewire.service pipewire-pulse.service sound.target
+After=pipewire.service pipewire-pulse.service sound.target graphical-session-pre.target
 Wants=pipewire.service pipewire-pulse.service
 
 [Service]
@@ -14,6 +14,7 @@ StandardError=journal
 
 # Environment
 Environment="XDG_RUNTIME_DIR=%t"
+Environment="DISPLAY=:0"
 Environment="LD_LIBRARY_PATH=@ABS_INSTALL_PREFIX@/lib:@ABS_INSTALL_PREFIX@/lib/res_embed"
 
 # Security
