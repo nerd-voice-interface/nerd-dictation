@@ -762,12 +762,15 @@ class DictationDaemon:
         try:
             data = client.recv(4096).decode()
             if data:
-                cmd = json.loads(data)
-                response = self.handle_command(cmd)
+                try:
+                    cmd = json.loads(data)
+                    response = self.handle_command(cmd)
+                except Exception as e:
+                    response = {"status": "error", "message": str(e)}
                 client.send(json.dumps(response).encode())
-        except Exception as e:
-            error_response = {"status": "error", "message": str(e)}
-            client.send(json.dumps(error_response).encode())
+        except OSError as e:
+            # Клиент отвалился, не дождавшись ответа — не повод ронять daemon
+            print(f"[daemon] клиент отключился: {e}", file=sys.stderr)
         finally:
             client.close()
 
