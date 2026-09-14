@@ -69,7 +69,7 @@ def load_config() -> dict:
     # Встроенный дефолт
     return {
         "general": {"backend": "vosk", "input_method": "xdotool"},
-        "audio": {"source": "pw-cat", "sample_rate": 16000, "chunk_size": 8000},
+        "audio": {"source": "pw-cat", "sample_rate": 16000, "chunk_size": 8000, "bt_fallback": True},
         "vosk": {"model_path": "~/.local/share/vosk/vosk-model-ru"},
         "gigaam": {"model_name": "v3_ctc", "device": "cuda"},
         "output": {"trailing_space": True},
@@ -372,10 +372,10 @@ class DictationDaemon:
 
     def _audio_listener_loop(self) -> None:
         """Постоянно слушать микрофон и заполнять кольцевой буфер."""
-        cmd = _get_audio_command(self.config)
         chunk_size = self.config.get("audio", {}).get("chunk_size", 8000)
 
         while self._running:
+            cmd = _get_audio_command(self.config)
             try:
                 self._audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
@@ -876,6 +876,8 @@ def cmd_toggle(args, config: dict) -> None:
 
 def _get_audio_command(config: dict) -> list:
     """Получить команду для записи аудио."""
+    from .audio_device import resolve_audio_source
+
     source = config.get("audio", {}).get("source", "pw-cat")
     sample_rate = config.get("audio", {}).get("sample_rate", 16000)
 
@@ -890,7 +892,17 @@ def _get_audio_command(config: dict) -> list:
 
     if source not in commands:
         raise ValueError(f"Неизвестный источник аудио: {source}")
-    return commands[source]
+
+    cmd = commands[source]
+    target = resolve_audio_source(config)
+    if target:
+        if source == "pw-cat":
+            # Вставляем --target <device> перед финальным "-"
+            cmd = cmd[:-1] + ["--target", target, "-"]
+        elif source == "parec":
+            cmd.append(f"--device={target}")
+
+    return cmd
 
 
 def _audio_stream(config: dict) -> Generator[bytes, None, None]:
