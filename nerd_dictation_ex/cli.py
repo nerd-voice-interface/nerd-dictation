@@ -84,6 +84,8 @@ class DaemonState(Enum):
     """Состояние daemon'а."""
     IDLE = "idle"
     LISTENING = "listening"
+    # Аудио больше не принимается, но очередь сегментов ещё распознаётся и печатается
+    FINALIZING = "finalizing"
     STOPPING = "stopping"
 
 
@@ -117,10 +119,29 @@ class DictationDaemon:
         self._audio_buffer: deque = deque(maxlen=self._buffer_max_chunks)
         self._audio_buffer_lock = threading.Lock()
         self._audio_listener_thread: Optional[threading.Thread] = None
+        # Канарейка: deque(maxlen=) вытесняет молча, поэтому считаем вытеснения сами
+        self._dropped_chunks = 0
+        self._chunk_seconds = chunk_size / (sample_rate * 2)
 
         # Очередь для wake word (без лимита, wake word loop потребляет данные)
         from queue import Queue
         self._wake_word_queue: Queue = Queue()
+
+        # Очередь сегментов на распознавание: потребитель аудио кладёт, воркер разбирает.
+        # Без лимита — отставание не должно стоить ни одного слова.
+        self._segment_queue: Queue = Queue()
+        self._recognizer_thread: Optional[threading.Thread] = None
+        # Поколение сессии: воркер отбрасывает сегменты отменённой диктовки
+        self._session_id = 0
+        self._discarded_session = None
+        # Явный флаг вместо сравнения state с LISTENING: во время FINALIZING
+        # аудио уже не нужно, но и wake word включать рано
+        self._dictation_active = False
+        self._pending_seconds = 0.0
+        self._pending_lock = threading.Lock()
+        # begin_dictation зовут и командный поток, и поток wake word —
+        # проверка состояния и переход обязаны быть неделимы
+        self._lifecycle_lock = threading.RLock()
 
         # Wake word detection
         self._wake_word_enabled = config.get("wake_word", {}).get("enabled", self.WAKE_WORD_ENABLED)
@@ -292,7 +313,7 @@ class DictationDaemon:
 
         while self._wake_word_running and self._running:
             # Пропускаем, если диктовка уже активна
-            if self.state == DaemonState.LISTENING:
+            if self._dictation_active:
                 # Сбросить состояние и очистить очередь
                 vad_buffer = np.array([], dtype=np.int16)
                 speech_buffer = b''
@@ -384,13 +405,23 @@ class DictationDaemon:
                     chunk = self._audio_proc.stdout.read(chunk_size)
                     if chunk:
                         with self._audio_buffer_lock:
+                            # deque(maxlen=) вытесняет слева молча — фиксируем факт.
+                            # В простое вытеснение штатно (буфер хранит последние
+                            # секунды), потерей речи оно становится только под диктовку.
+                            if (self._dictation_active
+                                    and len(self._audio_buffer) == self._buffer_max_chunks):
+                                self._dropped_chunks += 1
+                                if self._dropped_chunks % 20 == 1:
+                                    print(
+                                        f"[audio] ВНИМАНИЕ: потребитель не успевает, "
+                                        f"вытеснено чанков: {self._dropped_chunks} "
+                                        f"({self._dropped_chunks * self._chunk_seconds:.1f}s речи)",
+                                        file=sys.stderr,
+                                    )
                             self._audio_buffer.append(chunk)
                         # Дублируем в очередь для wake word
-                        if self._wake_word_running and self.state != DaemonState.LISTENING:
-                            try:
-                                self._wake_word_queue.put_nowait(chunk)
-                            except:
-                                pass  # Очередь переполнена - пропускаем
+                        if self._wake_word_running and not self._dictation_active:
+                            self._wake_word_queue.put_nowait(chunk)
                     elif not chunk:
                         # EOF или процесс завершился
                         break
@@ -458,18 +489,26 @@ class DictationDaemon:
     MIN_SILENCE_MS = 500  # Минимальная пауза для сегментации (мс)
     MIN_SPEECH_MS = 100  # Минимальная длина речи (мс)
     MAX_BUFFER_SECONDS = 25  # Максимум аудио в буфере
+    LAG_WARN_SECONDS = 30  # Порог предупреждения об отставании распознавания
 
     def _dictation_loop(self) -> None:
         """Основной цикл диктовки (в отдельном потоке)."""
         sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
+        session_id = self._session_id
 
-        # Проверяем, поддерживает ли бэкенд потоковое распознавание
-        is_streaming = getattr(self.backend, 'supports_streaming', True)
+        try:
+            # Проверяем, поддерживает ли бэкенд потоковое распознавание
+            is_streaming = getattr(self.backend, 'supports_streaming', True)
 
-        if is_streaming:
-            self._dictation_loop_streaming(sample_rate)
-        else:
-            self._dictation_loop_buffered(sample_rate)
+            if is_streaming:
+                self._dictation_loop_streaming(sample_rate)
+            else:
+                self._dictation_loop_buffered(sample_rate)
+        finally:
+            # Маркер конца сессии обязан уйти при ЛЮБОМ выходе — включая ранний
+            # return при отказе VAD. Без него воркер не переведёт демон в IDLE,
+            # и диктовка не начнётся уже никогда.
+            self._segment_queue.put((session_id, None))
 
     def _dictation_loop_streaming(self, sample_rate: int) -> None:
         """Цикл диктовки для потоковых бэкендов."""
@@ -547,23 +586,31 @@ class DictationDaemon:
         # Минимум 0.5 секунды аудио для распознавания
         min_audio_bytes = int(0.5 * sample_rate * 2)
 
-        def transcribe_and_type():
-            """Распознать буфер и вывести текст."""
+        session_id = self._session_id
+
+        def enqueue_segment():
+            """Отдать накопленный сегмент воркеру. Бэкенд здесь НЕ вызывается:
+            распознавание не должно останавливать потребление аудио."""
             nonlocal audio_buffer
             if len(audio_buffer) < min_audio_bytes:
                 audio_buffer.clear()
                 return
 
-            # Подаём всё аудио в бэкенд и финализируем
-            self.backend._backend.feed(bytes(audio_buffer))
-            result = self.backend._backend.finalize()
+            segment = bytes(audio_buffer)
             audio_buffer.clear()
+            seconds = len(segment) / (sample_rate * 2)
 
-            # Фильтруем пустые результаты
-            text = result.text.strip() if result.text else ""
-            if text:
-                print(f"[daemon] распознано: '{text}'", file=sys.stderr)
-                self._type_text(text)
+            with self._pending_lock:
+                self._pending_seconds += seconds
+                pending = self._pending_seconds
+            self._segment_queue.put((session_id, segment))
+
+            if pending >= self.LAG_WARN_SECONDS:
+                print(
+                    f"[daemon] ВНИМАНИЕ: распознавание отстаёт на {pending:.1f}s "
+                    f"(очередь {self._segment_queue.qsize()} сегментов)",
+                    file=sys.stderr,
+                )
 
         try:
             for chunk in self._audio_stream():
@@ -603,77 +650,163 @@ class DictationDaemon:
                 )
 
                 if should_transcribe:
-                    transcribe_and_type()
+                    enqueue_segment()
                     reset_vad_state()
 
-            # Финальный результат
-            print("[daemon] вызываю finalize (buffered)", file=sys.stderr)
-            transcribe_and_type()
+            # Хвост: недособранный буфер тоже должен быть распознан
+            enqueue_segment()
 
         except Exception as e:
             print(f"Ошибка диктовки (buffered): {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
         finally:
-            # Очищаем состояние VAD (только если он был использован)
+            # Очищаем состояние VAD (только если он был использован).
+            # Маркер конца сессии ставит _dictation_loop — он гарантирован
+            # даже на путях, которые сюда не доходят.
             reset_vad_state()
-            self.backend.reset()
-            self.state = DaemonState.IDLE
+
+    def _start_recognizer(self) -> None:
+        """Запустить воркер распознавания."""
+        if self._recognizer_thread and self._recognizer_thread.is_alive():
+            return
+
+        self._recognizer_thread = threading.Thread(
+            target=self._recognizer_loop, daemon=True
+        )
+        self._recognizer_thread.start()
+        print("Воркер распознавания запущен", file=sys.stderr)
+
+    def _recognizer_loop(self) -> None:
+        """Единственный поток, вызывающий бэкенд и печатающий текст.
+
+        Распознаватель — нативный объект за pybind11, а input/postprocess/spelling
+        держат ленивые несинхронизированные глобалы. Держим их все в одном потоке.
+        """
+        from queue import Empty
+
+        sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
+
+        # На остановке дорабатываем очередь, иначе уже распознанная речь
+        # пропадёт вместе с потоком
+        while self._running or not self._segment_queue.empty():
+            try:
+                session_id, segment = self._segment_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            # Сегмент отменённой сессии — выбрасываем, не печатая.
+            # Маркер конца (segment is None) пропускаем сюда всегда: именно он
+            # возвращает демон в IDLE, и потерять его нельзя.
+            if segment is not None and session_id == self._discarded_session:
+                with self._pending_lock:
+                    self._pending_seconds -= len(segment) / (sample_rate * 2)
+                continue
+
+            if segment is None:
+                # Сессия дошла до конца: очередь этой сессии разобрана
+                self.backend.reset()
+                with self._pending_lock:
+                    self._pending_seconds = 0.0
+                self.state = DaemonState.IDLE
+                continue
+
+            seconds = len(segment) / (sample_rate * 2)
+            started = time.monotonic()
+            try:
+                self.backend._backend.feed(segment)
+                result = self.backend._backend.finalize()
+                text = result.text.strip() if result.text else ""
+            except Exception as e:
+                print(f"[recognizer] ошибка распознавания: {e}", file=sys.stderr)
+                text = ""
+            elapsed = time.monotonic() - started
+
+            with self._pending_lock:
+                self._pending_seconds -= seconds
+
+            print(
+                f"[recognizer] сегмент {seconds:.2f}s распознан за {elapsed:.2f}s "
+                f"(RTF {elapsed / seconds:.2f})",
+                file=sys.stderr,
+            )
+
+            if text:
+                print(f"[daemon] распознано: '{text}'", file=sys.stderr)
+                self._type_text(text)
 
     def begin_dictation(self) -> dict:
         """Начать диктовку."""
-        if self.state == DaemonState.LISTENING:
-            return {"status": "error", "message": "Диктовка уже запущена"}
+        with self._lifecycle_lock:
+            if self.state == DaemonState.LISTENING:
+                return {"status": "error", "message": "Диктовка уже запущена"}
 
-        if not self.backend:
-            return {"status": "error", "message": "Бэкенд не загружен"}
+            if self.state == DaemonState.FINALIZING:
+                return {"status": "error", "message": "Идёт финализация предыдущей диктовки"}
 
-        self.state = DaemonState.LISTENING
-        self._stop_dictation.clear()
+            if not self.backend:
+                return {"status": "error", "message": "Бэкенд не загружен"}
 
-        # Сбросить постобработчик для новой диктовки
-        from .postprocess import reset_processor
-        from .sounds import play_begin
-        reset_processor()
-        # Сбросить фильтр шумоподавления для новой сессии
-        if self._noise_reducer:
-            self._noise_reducer.reset()
-        play_begin()
+            # Новая сессия начинается только из IDLE, поэтому живая сессия
+            # всегда ровно одна, и её маркер конца всегда совпадает с _session_id
+            self._session_id += 1
+            self._discarded_session = None
+            self._dictation_active = True
+            self.state = DaemonState.LISTENING
+            self._stop_dictation.clear()
 
-        self._dictation_thread = threading.Thread(target=self._dictation_loop, daemon=True)
-        self._dictation_thread.start()
+            # Сбросить постобработчик для новой диктовки
+            from .postprocess import reset_processor
+            from .sounds import play_begin
+            reset_processor()
+            # Сбросить фильтр шумоподавления для новой сессии
+            if self._noise_reducer:
+                self._noise_reducer.reset()
+            play_begin()
 
-        return {"status": "ok", "message": "Диктовка запущена"}
+            self._dictation_thread = threading.Thread(target=self._dictation_loop, daemon=True)
+            self._dictation_thread.start()
+
+            return {"status": "ok", "message": "Диктовка запущена"}
 
     def end_dictation(self) -> dict:
         """Завершить диктовку с выводом текста."""
-        if self.state != DaemonState.LISTENING:
-            return {"status": "error", "message": "Диктовка не запущена"}
+        with self._lifecycle_lock:
+            if self.state != DaemonState.LISTENING:
+                return {"status": "error", "message": "Диктовка не запущена"}
 
-        from .sounds import play_end
-        play_end()
+            from .sounds import play_end
+            play_end()
 
-        self._stop_dictation.set()
+            # Потребитель теперь делает только VAD, поэтому выходит быстро.
+            # В IDLE переведёт воркер, когда допечатает очередь.
+            self._stop_dictation.set()
+            self._dictation_active = False
+            self.state = DaemonState.FINALIZING
 
-        if self._dictation_thread:
-            self._dictation_thread.join(timeout=2.0)
+            if self._dictation_thread:
+                self._dictation_thread.join(timeout=2.0)
 
-        self.state = DaemonState.IDLE
-        return {"status": "ok", "message": "Диктовка завершена"}
+            return {"status": "ok", "message": "Диктовка завершена"}
 
     def cancel_dictation(self) -> dict:
         """Отменить диктовку без вывода."""
-        if self.state != DaemonState.LISTENING:
-            return {"status": "error", "message": "Диктовка не запущена"}
+        with self._lifecycle_lock:
+            if self.state != DaemonState.LISTENING:
+                return {"status": "error", "message": "Диктовка не запущена"}
 
-        self._stop_dictation.set()
-        self.backend.reset()
-        self.state = DaemonState.IDLE
+            # Помечаем сессию к выбросу: воркер пропустит её сегменты, но
+            # маркер конца отработает штатно и переведёт демон в IDLE.
+            # backend.reset() отсюда НЕ вызываем — воркер может быть в finalize().
+            self._discarded_session = self._session_id
+            self._dictation_active = False
+            self.state = DaemonState.FINALIZING
 
-        if self._dictation_thread:
-            self._dictation_thread.join(timeout=1.0)
+            self._stop_dictation.set()
+            if self._dictation_thread:
+                self._dictation_thread.join(timeout=1.0)
 
-        return {"status": "ok", "message": "Диктовка отменена"}
+            return {"status": "ok", "message": "Диктовка отменена"}
 
     def get_status(self) -> dict:
         """Получить статус daemon'а."""
@@ -707,8 +840,9 @@ class DictationDaemon:
 
     def _reload_backend(self, backend_name: str = None) -> dict:
         """Перезагрузить бэкенд."""
-        if self.state == DaemonState.LISTENING:
-            return {"status": "error", "message": "Остановите диктовку перед перезагрузкой"}
+        # В FINALIZING бэкендом владеет воркер — обнулять его нельзя
+        if self.state != DaemonState.IDLE:
+            return {"status": "error", "message": "Дождитесь окончания диктовки перед перезагрузкой"}
 
         try:
             self.backend = None
@@ -721,7 +855,11 @@ class DictationDaemon:
     def _shutdown(self) -> dict:
         """Остановить daemon."""
         self._running = False
+        self._dictation_active = False
         self._wake_word_running = False
+        # Остановить производителя сегментов, иначе воркер сливает очередь,
+        # в которую продолжают класть
+        self._stop_dictation.set()
         return {"status": "ok", "message": "Daemon останавливается"}
 
     def run(self) -> None:
@@ -739,6 +877,9 @@ class DictationDaemon:
         # Запустить постоянный аудио-слушатель
         self._start_audio_listener()
 
+        # Запустить воркер распознавания
+        self._start_recognizer()
+
         # Запустить wake word detection если включено
         self._start_wake_word_detection()
 
@@ -753,6 +894,22 @@ class DictationDaemon:
                     continue
         finally:
             server.close()
+            # Порядок важен: сперва глушим производителя сегментов, иначе
+            # воркер сливает очередь, в которую продолжают класть, и выход
+            # по опустевшей очереди становится гонкой.
+            self._stop_dictation.set()
+            if self._dictation_thread:
+                self._dictation_thread.join(timeout=5.0)
+            # Дать воркеру допечатать набранное: finalize_interpreter() убьёт
+            # daemon-потоки молча, вместе с неразобранной очередью
+            if self._recognizer_thread:
+                self._recognizer_thread.join(timeout=10.0)
+                if self._recognizer_thread.is_alive():
+                    print(
+                        f"[daemon] ВНИМАНИЕ: воркер не успел, потеряно "
+                        f"{self._segment_queue.qsize()} сегментов",
+                        file=sys.stderr,
+                    )
             SOCKET_PATH.unlink(missing_ok=True)
             PID_FILE.unlink(missing_ok=True)
             print("Daemon остановлен", file=sys.stderr)
