@@ -597,10 +597,20 @@ int main(int argc, char* argv[]) {
     } catch (py::error_already_set& e) {
         // Check if it's SystemExit (raised by argparse --help or sys.exit())
         if (e.matches(PyExc_SystemExit)) {
-            // Normal exit (argparse --help, sys.exit(0), etc.)
-            // Clear the error before finalization
-            PyErr_Clear();
+            // Propagate the status passed to sys.exit(), following CPython semantics:
+            // None/absent -> 0, int -> that value, anything else -> print it and exit 1.
+            // Swallowing it as 0 would hide Python-level failures from systemd.
             exit_code = 0;
+            py::object code = py::getattr(e.value(), "code", py::none());
+            if (!code.is_none()) {
+                if (py::isinstance<py::int_>(code)) {
+                    exit_code = code.cast<int>();
+                } else {
+                    spdlog::error("{}", py::str(code).cast<std::string>());
+                    exit_code = 1;
+                }
+            }
+            PyErr_Clear();
         } else {
             spdlog::error("Python error: {}", e.what());
             PyErr_Clear();
