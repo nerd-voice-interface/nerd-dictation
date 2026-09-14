@@ -915,21 +915,16 @@ def _audio_stream(config: dict) -> Generator[bytes, None, None]:
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
-    fd = proc.stdout.fileno()
-    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-
     try:
-        while proc.poll() is None:
-            try:
-                chunk = proc.stdout.read(chunk_size)
-                if chunk:
-                    # Применяем шумоподавление если включено
-                    if noise_reducer:
-                        chunk = noise_reducer.process_chunk(chunk)
-                    yield chunk
-            except BlockingIOError:
-                time.sleep(0.01)
+        # Блокирующее чтение — ждём пока накопится chunk_size байт
+        while True:
+            chunk = proc.stdout.read(chunk_size)
+            if not chunk:
+                break  # EOF: процесс записи завершился
+            # Применяем шумоподавление если включено
+            if noise_reducer:
+                chunk = noise_reducer.process_chunk(chunk)
+            yield chunk
     finally:
         proc.terminate()
         proc.wait()
