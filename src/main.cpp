@@ -264,10 +264,14 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
              py::call_guard<py::gil_scoped_release>(),
              "Reset recognizer state")
         .def_property("wake_word",
-                      &nerd_dictation::wake_word::WakeWordManager::wake_word,
-                      [](nerd_dictation::wake_word::WakeWordManager& self, const std::string& word) {
-                          self.set_wake_word(word);
-                      },
+                      // и геттер, и сеттер берут mutex_
+                      py::cpp_function(&nerd_dictation::wake_word::WakeWordManager::wake_word,
+                                       py::call_guard<py::gil_scoped_release>()),
+                      py::cpp_function(
+                          [](nerd_dictation::wake_word::WakeWordManager& self, const std::string& word) {
+                              self.set_wake_word(word);
+                          },
+                          py::call_guard<py::gil_scoped_release>()),
                       "Current wake word")
         .def("set_wake_word", &nerd_dictation::wake_word::WakeWordManager::set_wake_word,
              py::call_guard<py::gil_scoped_release>(),
@@ -419,21 +423,25 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def("reset", &nerd_dictation::audio::AudioPreprocessor::reset,
              "Reset preprocessor state")
         .def("process", [](nerd_dictation::audio::AudioPreprocessor& self, py::bytes data) {
-            // Convert bytes to int16 samples
+            // Копия нужна, чтобы отпустить GIL: py::bytes нельзя трогать без него
             std::string_view sv = data;
-            const int16_t* input = reinterpret_cast<const int16_t*>(sv.data());
+            const int16_t* begin = reinterpret_cast<const int16_t*>(sv.data());
             size_t num_samples = sv.size() / sizeof(int16_t);
-
-            // Allocate output buffer
+            std::vector<int16_t> input(begin, begin + num_samples);
             std::vector<int16_t> output(num_samples);
 
-            // Process
-            int result = self.process(input, num_samples, output.data());
+            int result;
+            {
+                // GIL снимаем только на сам вызов: WebRTC APM работает на
+                // каждом аудио-чанке, а результат ниже заворачивается в
+                // py::bytes — это уже работа с Python-объектом, нужен GIL
+                py::gil_scoped_release unlock;
+                result = self.process(input.data(), num_samples, output.data());
+            }
             if (result < 0) {
                 throw std::runtime_error("AudioPreprocessor::process() failed");
             }
 
-            // Return as bytes
             return py::bytes(reinterpret_cast<const char*>(output.data()),
                             result * sizeof(int16_t));
         }, py::arg("audio_bytes"),
@@ -441,7 +449,11 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def("process_samples", [](nerd_dictation::audio::AudioPreprocessor& self,
                                    const std::vector<int16_t>& samples) {
             std::vector<int16_t> output(samples.size());
-            int result = self.process(samples.data(), samples.size(), output.data());
+            int result;
+            {
+                py::gil_scoped_release unlock;
+                result = self.process(samples.data(), samples.size(), output.data());
+            }
             if (result < 0) {
                 throw std::runtime_error("AudioPreprocessor::process() failed");
             }
@@ -480,15 +492,23 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
              "Create spell corrector and load model from path")
         .def(py::init<const nerd_dictation::spelling::SpellCorrectorConfig&>(),
              py::arg("config"), "Create spell corrector with configuration")
+        // Все пять методов берут SpellCorrector::mutex_, а correct() держит
+        // его десятки миллисекунд. Ждать этот мьютекс с GIL в руках значит
+        // останавливать все потоки Python.
         .def("load_model", &nerd_dictation::spelling::SpellCorrector::load_model,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("model_path"), "Load JamSpell model from file")
         .def("is_loaded", &nerd_dictation::spelling::SpellCorrector::is_loaded,
+             py::call_guard<py::gil_scoped_release>(),
              "Check if model is loaded")
         .def("correct", &nerd_dictation::spelling::SpellCorrector::correct,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("text"), "Correct text using loaded model (UTF-8)")
         .def("word_is_known", &nerd_dictation::spelling::SpellCorrector::word_is_known,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("word"), "Check if word is in vocabulary")
         .def("set_penalties", &nerd_dictation::spelling::SpellCorrector::set_penalties,
+             py::call_guard<py::gil_scoped_release>(),
              py::arg("known_penalty"), py::arg("unknown_penalty"),
              "Set correction penalties")
         .def_property_readonly("config",
