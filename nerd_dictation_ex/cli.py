@@ -98,6 +98,10 @@ class DictationDaemon:
     # Wake word настройки
     WAKE_WORD = "запись"
     WAKE_WORD_ENABLED = True
+    # Кнопка мыши X, переключающая диктовку; 0 = выключено. По умолчанию
+    # выключено: захват кнопки отнимает её у всех приложений (вставку средней)
+    TRIGGER_MOUSE_BUTTON = 0
+    TRIGGER_RETRY_SECONDS = 2.0
 
     def __init__(self, config: dict):
         self.config = config
@@ -142,6 +146,12 @@ class DictationDaemon:
         # begin_dictation зовут и командный поток, и поток wake word —
         # проверка состояния и переход обязаны быть неделимы
         self._lifecycle_lock = threading.RLock()
+
+        # Кнопка-триггер: захватывает и проверяет её сам демон (см. trigger в main.cpp)
+        self._trigger_button = int(
+            config.get("trigger", {}).get("mouse_button", self.TRIGGER_MOUSE_BUTTON)
+        )
+        self._trigger_thread: Optional[threading.Thread] = None
 
         # Wake word detection
         self._wake_word_enabled = config.get("wake_word", {}).get("enabled", self.WAKE_WORD_ENABLED)
@@ -295,6 +305,68 @@ class DictationDaemon:
         )
         self._wake_word_thread.start()
         print(f"Wake word detection запущен (слово: '{self._wake_word}')", file=sys.stderr)
+
+    def _start_button_trigger(self) -> None:
+        """Запустить поток кнопки-триггера, если она включена в конфиге."""
+        if not self._trigger_button:
+            return
+
+        if self._trigger_thread and self._trigger_thread.is_alive():
+            return
+
+        try:
+            from _nerd_dictation_native import trigger as native_trigger
+        except ImportError:
+            print("[trigger] модуль не собран (нет xcb-xinput) — кнопка не работает",
+                  file=sys.stderr)
+            return
+
+        self._trigger_thread = threading.Thread(
+            target=self._button_trigger_loop, args=(native_trigger,), daemon=True
+        )
+        self._trigger_thread.start()
+
+    def _button_trigger_loop(self, native_trigger) -> None:
+        """Ждать нажатий кнопки и переключать диктовку.
+
+        Демон стартует при загрузке, раньше X, а X может перезапуститься
+        (выход из сессии и повторный вход). Поэтому соединение не одноразовое:
+        при любой потере переподключаемся, пока демон жив.
+        """
+        trigger = native_trigger.ButtonTrigger(self._trigger_button)
+        event = native_trigger.TriggerEvent
+        last_error = None
+
+        while self._running:
+            if not trigger.connected():
+                if trigger.connect():
+                    print(f"[trigger] захват кнопки {self._trigger_button} установлен",
+                          file=sys.stderr)
+                    last_error = None
+                    continue
+
+                # Пишем причину один раз на каждую смену, а не каждые 2 секунды
+                error = trigger.get_error()
+                if error != last_error:
+                    print(f"[trigger] кнопка {self._trigger_button} не захвачена: {error}; "
+                          f"повтор каждые {self.TRIGGER_RETRY_SECONDS:g}s", file=sys.stderr)
+                    last_error = error
+                deadline = time.monotonic() + self.TRIGGER_RETRY_SECONDS
+                while self._running and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                continue
+
+            result = trigger.wait(200)
+            if result == event.PRESSED:
+                response = self.toggle_dictation()
+                print(f"[trigger] '{trigger.last_source()}': {response.get('message')}",
+                      file=sys.stderr)
+            elif result == event.REJECTED:
+                # Канарейка: именно такие клики раньше ложно запускали диктовку
+                print(f"[trigger] отклонён синтезированный клик от '{trigger.last_source()}'",
+                      file=sys.stderr)
+            elif result == event.DISCONNECTED:
+                print(f"[trigger] {trigger.get_error()}, переподключаюсь", file=sys.stderr)
 
     def _wake_word_loop(self) -> None:
         """Цикл распознавания wake word."""
@@ -808,6 +880,18 @@ class DictationDaemon:
 
             return {"status": "ok", "message": "Диктовка отменена"}
 
+    def toggle_dictation(self) -> dict:
+        """Переключить диктовку: идёт — завершить, иначе начать.
+
+        Решение и переход под одной блокировкой: клиентский toggle из двух
+        запросов (status, затем begin/end) мог разойтись с состоянием между ними.
+        Во время FINALIZING begin_dictation сам откажет с понятной причиной.
+        """
+        with self._lifecycle_lock:
+            if self.state == DaemonState.LISTENING:
+                return self.end_dictation()
+            return self.begin_dictation()
+
     def get_status(self) -> dict:
         """Получить статус daemon'а."""
         return {
@@ -826,6 +910,7 @@ class DictationDaemon:
             "begin": self.begin_dictation,
             "end": self.end_dictation,
             "cancel": self.cancel_dictation,
+            "toggle": self.toggle_dictation,
             "status": self.get_status,
             "reload": lambda: self._reload_backend(cmd.get("backend")),
             "shutdown": self._shutdown,
@@ -882,6 +967,9 @@ class DictationDaemon:
 
         # Запустить wake word detection если включено
         self._start_wake_word_detection()
+
+        # Запустить кнопку-триггер, если включена
+        self._start_button_trigger()
 
         print(f"Daemon запущен, socket: {SOCKET_PATH}", file=sys.stderr)
 
@@ -1018,11 +1106,10 @@ def cmd_cancel(args, config: dict) -> None:
 def cmd_toggle(args, config: dict) -> None:
     """Переключить диктовку (begin/end)."""
     if DaemonClient.is_running():
-        status = DaemonClient.send_command({"action": "status"})
-        if status.get("state") == "listening":
-            cmd_end(args, config)
-        else:
-            cmd_begin(args, config)
+        response = DaemonClient.send_command({"action": "toggle"})
+        print(response.get("message", ""), file=sys.stderr)
+        if response.get("status") != "ok":
+            sys.exit(1)
     else:
         if COOKIE_PATH.exists():
             _cmd_end_direct(args, config)

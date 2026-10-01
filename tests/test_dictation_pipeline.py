@@ -16,6 +16,10 @@ _dictation_loop_buffered. Заглушками подменены только �
   R4  cancel выбрасывает сегменты отменённой сессии, но не следующей
   R5  LISTENING -> FINALIZING -> IDLE, в IDLE переводит только воркер
   R6  вытеснение из кольцевого буфера фиксируется счётчиком
+  R7  отказ VAD не заклинивает демон в FINALIZING
+  R8  toggle в демоне: IDLE -> LISTENING -> FINALIZING, в FINALIZING отказ
+  R9  поток кнопки: PRESSED переключает, REJECTED нет, после обрыва X
+      и неудачного подключения — переподключение
 
 Запуск:  python3 tests/test_dictation_pipeline.py
 """
@@ -91,6 +95,57 @@ _stub("vad", is_initialized=lambda: True,
       init=lambda sample_rate, threshold: True,
       reset_states=lambda: None, get_chunk_size=lambda: 512,
       process_chunk=_vad_process, get_error=lambda: "")
+
+# Заглушка нативного модуля кнопки: настоящий XCB-код проверяется в gtest
+# (tests/test_button_trigger.cpp), здесь — только логика потока демона
+class _TriggerEvent:
+    NONE, PRESSED, REJECTED, DISCONNECTED = "NONE", "PRESSED", "REJECTED", "DISCONNECTED"
+
+
+class _FakeButtonTrigger:
+    connect_plan = []   # результаты connect() по очереди; пусто — True
+    wait_plan = []      # события wait() по очереди; пусто — NONE
+    instances = []
+
+    def __init__(self, button):
+        self.button = button
+        self._connected = False
+        self.connects = 0
+        _FakeButtonTrigger.instances.append(self)
+
+    def connect(self):
+        self.connects += 1
+        plan = _FakeButtonTrigger.connect_plan
+        self._connected = plan.pop(0) if plan else True
+        return self._connected
+
+    def connected(self):
+        return self._connected
+
+    def wait(self, timeout_ms):
+        plan = _FakeButtonTrigger.wait_plan
+        if not plan:
+            time.sleep(0.01)
+            return _TriggerEvent.NONE
+        ev = plan.pop(0)
+        if ev == _TriggerEvent.DISCONNECTED:
+            self._connected = False
+        return ev
+
+    def last_source(self):
+        return "fake device"
+
+    def get_error(self):
+        return "fake error"
+
+
+_native_pkg = types.ModuleType("_nerd_dictation_native")
+_native_trigger = types.ModuleType("_nerd_dictation_native.trigger")
+_native_trigger.ButtonTrigger = _FakeButtonTrigger
+_native_trigger.TriggerEvent = _TriggerEvent
+_native_pkg.trigger = _native_trigger
+sys.modules.setdefault("_nerd_dictation_native", _native_pkg)
+sys.modules.setdefault("_nerd_dictation_native.trigger", _native_trigger)
 
 from nerd_dictation_ex import cli  # noqa: E402
 
@@ -285,6 +340,72 @@ def run_vad_failure():
     return {"recovered": recovered, "accepts_next": accepts}
 
 
+def run_toggle():
+    """R8 — единый toggle в демоне."""
+    del TYPED[:]
+    d = make_daemon()
+    d._start_audio_listener()
+    d._start_recognizer()
+
+    first = d.toggle_dictation()
+    after_first = d.state
+    time.sleep(0.3)
+    second = d.toggle_dictation()
+    after_second = d.state
+    drained = wait_idle(d, timeout=30.0)
+
+    # FINALIZING выставляем явно: ждать его по времени значило бы гонку в тесте
+    d.state = cli.DaemonState.FINALIZING
+    third = d.toggle_dictation()
+    after_third = d.state
+    d.state = cli.DaemonState.IDLE
+
+    via_socket = d.handle_command({"action": "toggle"})
+    after_socket = d.state
+    d.end_dictation()
+    wait_idle(d, timeout=30.0)
+    d._running = False
+    return {
+        "first": (first.get("status"), after_first),
+        "second": (second.get("status"), after_second),
+        "drained": drained,
+        "third": (third.get("status"), after_third),
+        "socket": (via_socket.get("status"), after_socket),
+    }
+
+
+def run_trigger_loop():
+    """R9 — поток кнопки на заглушке нативного модуля."""
+    d = make_daemon()
+    d._trigger_button = 2
+    d.TRIGGER_RETRY_SECONDS = 0.05
+    toggles = []
+    d.toggle_dictation = lambda: toggles.append(1) or {"status": "ok", "message": "fake"}
+
+    _FakeButtonTrigger.instances.clear()
+    # Первое подключение неудачно (X ещё нет), затем успешно, после обрыва — снова
+    _FakeButtonTrigger.connect_plan[:] = [False, True, True]
+    _FakeButtonTrigger.wait_plan[:] = [
+        _TriggerEvent.REJECTED, _TriggerEvent.PRESSED,
+        _TriggerEvent.DISCONNECTED, _TriggerEvent.PRESSED,
+    ]
+    d._start_button_trigger()
+    end = time.monotonic() + 5.0
+    while _FakeButtonTrigger.wait_plan and time.monotonic() < end:
+        time.sleep(0.02)
+    time.sleep(0.1)
+    d._running = False
+    d._trigger_thread.join(timeout=2.0)
+
+    t = _FakeButtonTrigger.instances[0] if _FakeButtonTrigger.instances else None
+    return {
+        "toggles": len(toggles),
+        "connects": t.connects if t else 0,
+        "plan_left": len(_FakeButtonTrigger.wait_plan),
+        "thread_stopped": not d._trigger_thread.is_alive(),
+    }
+
+
 def main():
     ok = True
     r = run_main()
@@ -360,6 +481,27 @@ def main():
     else:
         print(f"R7 FAIL: демон завис после отказа VAD: {v}")
         ok = False
+
+    if hasattr(cli.DictationDaemon, "toggle_dictation"):
+        t = run_toggle()
+        L, F = cli.DaemonState.LISTENING, getattr(cli.DaemonState, "FINALIZING", None)
+        if (t["first"] == ("ok", L) and t["second"] == ("ok", F) and t["drained"]
+                and t["third"] == ("error", F) and t["socket"] == ("ok", L)):
+            print("R8 PASS: toggle IDLE->LISTENING->FINALIZING->IDLE, в FINALIZING отказ, "
+                  "команда сокета работает")
+        else:
+            print(f"R8 FAIL: {t}")
+            ok = False
+
+        g = run_trigger_loop()
+        if g == {"toggles": 2, "connects": 3, "plan_left": 0, "thread_stopped": True}:
+            print("R9 PASS: PRESSED переключает, REJECTED нет, переподключение после "
+                  "неудачи и обрыва, поток останавливается")
+        else:
+            print(f"R9 FAIL: {g}")
+            ok = False
+    else:
+        print("R8/R9 SKIP: в этой версии нет toggle в демоне")
 
     print("ALL PASS" if ok else "FAILED")
     return 0 if ok else 1
