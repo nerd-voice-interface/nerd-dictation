@@ -17,7 +17,19 @@ set(TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/sounds/sounds.cpp
 )
 
+if(XCB_XINPUT_FOUND)
+    list(APPEND TEST_SOURCES
+        test_button_trigger.cpp
+        ${CMAKE_SOURCE_DIR}/src/trigger/button_trigger.cpp
+    )
+endif()
+
 add_executable(nerd-dictation-tests ${TEST_SOURCES})
+
+if(XCB_XINPUT_FOUND)
+    target_link_libraries(nerd-dictation-tests PRIVATE ${XCB_XINPUT_LIBRARIES})
+    target_include_directories(nerd-dictation-tests PRIVATE ${XCB_XINPUT_INCLUDE_DIRS})
+endif()
 
 # Include directories
 target_include_directories(nerd-dictation-tests

@@ -30,6 +30,9 @@
 #ifdef HAVE_VOSK
 #include "nerd_dictation/wake_word/wake_word_manager.hpp"
 #endif
+#ifdef HAVE_XCB_XINPUT
+#include "nerd_dictation/trigger/button_trigger.hpp"
+#endif
 #include "nerd_dictation/postprocess/text_postprocessor.hpp"
 #include "nerd_dictation/audio/audio_preprocessor.hpp"
 #ifdef HAVE_JAMSPELL
@@ -288,6 +291,32 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
                   "Find default Vosk model for wake word detection");
     wake_word.def("model_exists", &nerd_dictation::wake_word::vosk_model_exists,
                   py::arg("path"), "Check if Vosk model exists at path");
+#endif
+
+#ifdef HAVE_XCB_XINPUT
+    // ========== Trigger Submodule ==========
+    auto trigger = m.def_submodule("trigger", "Mouse button trigger (XInput2)");
+
+    py::enum_<nerd_dictation::trigger::TriggerEvent>(trigger, "TriggerEvent")
+        .value("NONE", nerd_dictation::trigger::TriggerEvent::None)
+        .value("PRESSED", nerd_dictation::trigger::TriggerEvent::Pressed)
+        .value("REJECTED", nerd_dictation::trigger::TriggerEvent::Rejected)
+        .value("DISCONNECTED", nerd_dictation::trigger::TriggerEvent::Disconnected);
+
+    // Объект принадлежит одному потоку, мьютекса нет. GIL снимается на
+    // сетевых вызовах к X: connect() ждёт ответов сервера, wait() — событий.
+    py::class_<nerd_dictation::trigger::ButtonTrigger>(trigger, "ButtonTrigger")
+        .def(py::init<int>(), py::arg("button"))
+        .def("connect", &nerd_dictation::trigger::ButtonTrigger::connect,
+             py::call_guard<py::gil_scoped_release>(),
+             "Connect to X, grab the button; False on failure (see get_error)")
+        .def("connected", &nerd_dictation::trigger::ButtonTrigger::connected)
+        .def("wait", &nerd_dictation::trigger::ButtonTrigger::wait,
+             py::call_guard<py::gil_scoped_release>(),
+             py::arg("timeout_ms"), "Wait for the next press")
+        .def("last_source", &nerd_dictation::trigger::ButtonTrigger::last_source,
+             "Device name of the last press")
+        .def("get_error", &nerd_dictation::trigger::ButtonTrigger::get_error);
 #endif
 
     // ==========================================================================

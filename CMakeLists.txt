@@ -88,6 +88,14 @@ else()
     message(FATAL_ERROR "libsamplerate not found. Install: sudo pacman -S libsamplerate")
 endif()
 
+# XCB + XInput2 (mouse button trigger owned by the daemon)
+pkg_check_modules(XCB_XINPUT xcb xcb-xinput)
+if(XCB_XINPUT_FOUND)
+    message(STATUS "xcb-xinput found: button trigger enabled")
+else()
+    message(WARNING "xcb-xinput not found: button trigger disabled. Install: sudo pacman -S libxcb")
+endif()
+
 # ONNX Runtime (for Silero VAD)
 find_path(ONNXRUNTIME_INCLUDE_DIR
     NAMES onnxruntime/core/session/onnxruntime_cxx_api.h
@@ -362,6 +370,11 @@ if(VOSK_FOUND)
     list(APPEND SOURCES ${SOURCE_DIR}/wake_word/wake_word_manager.cpp)
 endif()
 
+# Button Trigger (requires XCB + XInput2)
+if(XCB_XINPUT_FOUND)
+    list(APPEND SOURCES ${SOURCE_DIR}/trigger/button_trigger.cpp)
+endif()
+
 # Spell Corrector (requires JamSpell)
 if(JAMSPELL_FOUND)
     list(APPEND SOURCES ${SOURCE_DIR}/spelling/spell_corrector.cpp)
@@ -387,6 +400,11 @@ endif()
 # Wake Word Manager header (requires Vosk)
 if(VOSK_FOUND)
     list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/wake_word/wake_word_manager.hpp)
+endif()
+
+# Button Trigger header (requires XCB + XInput2)
+if(XCB_XINPUT_FOUND)
+    list(APPEND HEADERS ${INCLUDE_DIR}/nerd_dictation/trigger/button_trigger.hpp)
 endif()
 
 # Spell Corrector header (requires JamSpell)
@@ -538,6 +556,13 @@ endif()
 if(VOSK_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${VOSK_LIBRARY})
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_VOSK)
+endif()
+
+# XCB + XInput2 (button trigger)
+if(XCB_XINPUT_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${XCB_XINPUT_LIBRARIES})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${XCB_XINPUT_INCLUDE_DIRS})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_XCB_XINPUT)
 endif()
 
 # JamSpell (for spell correction)
