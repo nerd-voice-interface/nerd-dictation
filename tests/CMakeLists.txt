@@ -7,6 +7,7 @@ set(TEST_SOURCES
     test_input_simulator.cpp
     test_config.cpp
     test_daemon.cpp
+    test_resampler.cpp
     # Source files for components being tested
     ${CMAKE_SOURCE_DIR}/src/input/input_simulator.cpp
     ${CMAKE_SOURCE_DIR}/src/input/postprocess.cpp
@@ -14,6 +15,7 @@ set(TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/config/config.cpp
     ${CMAKE_SOURCE_DIR}/src/daemon/daemon.cpp
     ${CMAKE_SOURCE_DIR}/src/audio/audio_preprocessor.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/resampler.cpp
     ${CMAKE_SOURCE_DIR}/src/sounds/sounds.cpp
 )
 

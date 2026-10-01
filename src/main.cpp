@@ -35,6 +35,7 @@
 #endif
 #include "nerd_dictation/postprocess/text_postprocessor.hpp"
 #include "nerd_dictation/audio/audio_preprocessor.hpp"
+#include "nerd_dictation/audio/resampler.hpp"
 #ifdef HAVE_JAMSPELL
 #include "nerd_dictation/spelling/spell_corrector.hpp"
 #endif
@@ -441,6 +442,29 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def_readwrite("high_pass_filter_enabled",
                        &nerd_dictation::audio::AudioPreprocessor::Config::high_pass_filter_enabled,
                        "Enable high-pass filter to remove DC offset");
+
+    // Resampler: owned by one thread (the recognizer worker), no mutex.
+    // GIL is released only around the conversion itself: the input bytes are
+    // copied first and the output bytes are built back under the GIL.
+    py::class_<nerd_dictation::audio::Resampler>(audio, "Resampler")
+        .def(py::init<int, int>(), py::arg("in_rate"), py::arg("out_rate"))
+        .def("process", [](nerd_dictation::audio::Resampler& self, py::bytes data) {
+            std::string_view sv = data;
+            const int16_t* begin = reinterpret_cast<const int16_t*>(sv.data());
+            std::vector<int16_t> input(begin, begin + sv.size() / sizeof(int16_t));
+            std::vector<int16_t> output;
+            {
+                py::gil_scoped_release unlock;
+                output = self.process(input.data(), input.size());
+            }
+            return py::bytes(reinterpret_cast<const char*>(output.data()),
+                             output.size() * sizeof(int16_t));
+        }, py::arg("audio_bytes"), "Convert raw int16 PCM bytes to the output rate")
+        .def("reset", &nerd_dictation::audio::Resampler::reset,
+             py::call_guard<py::gil_scoped_release>(),
+             "Drop filter history before an unrelated signal")
+        .def("in_rate", &nerd_dictation::audio::Resampler::in_rate)
+        .def("out_rate", &nerd_dictation::audio::Resampler::out_rate);
 
     // AudioPreprocessor class
     py::class_<nerd_dictation::audio::AudioPreprocessor>(audio, "AudioPreprocessor")

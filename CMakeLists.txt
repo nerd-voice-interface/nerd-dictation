@@ -357,6 +357,7 @@ set(SOURCES
     ${SOURCE_DIR}/sounds/sounds.cpp
     ${SOURCE_DIR}/daemon/daemon.cpp
     ${SOURCE_DIR}/audio/audio_preprocessor.cpp
+    ${SOURCE_DIR}/audio/resampler.cpp
     ${SOURCE_DIR}/postprocess/text_postprocessor.cpp
 )
 
@@ -389,6 +390,7 @@ set(HEADERS
     ${INCLUDE_DIR}/nerd_dictation/sounds/sounds.hpp
     ${INCLUDE_DIR}/nerd_dictation/daemon/daemon.hpp
     ${INCLUDE_DIR}/nerd_dictation/audio/audio_preprocessor.hpp
+    ${INCLUDE_DIR}/nerd_dictation/audio/resampler.hpp
     ${INCLUDE_DIR}/nerd_dictation/postprocess/text_postprocessor.hpp
 )
 
