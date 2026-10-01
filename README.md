@@ -35,9 +35,6 @@ sudo pacman -S pipewire-pulse libpipewire libpulse cmake pkg-config
 sudo pacman -S xdotool      # For X11
 yay -S ydotool              # For Wayland (AUR)
 
-# Button binding (for touchpad/mouse button)
-sudo pacman -S xbindkeys    # For monitoring button presses
-
 # Vosk (AUR, optional, for wake word detection)
 yay -S vosk-api-bin
 
@@ -130,92 +127,36 @@ For Hyprland (`~/.config/hypr/hyprland.conf`):
 bind = $mod SHIFT, grave, exec, /path/to/nerd-dictation toggle
 ```
 
-#### Option 2: Touchpad/Mouse Button (xbindkeys)
+#### Option 2: Mouse Button (built into the daemon)
 
-To bind to a physical middle button (mouse, or the TrackPoint buttons on a ThinkPad):
+The daemon can grab a mouse button itself and toggle dictation on each press. Enable it in
+the config (`0`, the default, leaves the button alone):
 
-```bash
-# Install xbindkeys
-sudo pacman -S xbindkeys  # Arch Linux
-
-# Create config
-cat > ~/.xbindkeysrc << 'EOF'
-"/path/to/nerd-dictation toggle"
-  b:2
-EOF
+```toml
+[trigger]
+mouse_button = 2   # 2 = middle; also 1, 3, 8, 9
 ```
 
-**Touchpads cause false starts.** Most touchpads have no physical middle button: libinput
-synthesizes button 2 from a three-finger tap (when `Tapping` is on) or a three-finger click
-(`ClickMethod "clickfinger"`). A palm or thumb brushing the pad while one finger moves is
-enough to trigger it. xbindkeys only sees the core button 2 and cannot tell which device it
-came from, so these synthesized clicks toggle dictation too.
-
-Check whether your touchpad synthesizes the middle button (`middle` in either map means it does):
-
-```bash
-sudo libinput list-devices | grep -E '^Device:|button map'
-```
-
-If so, deactivate button 2 on the touchpad only — the physical middle button on another device
-keeps working. Add to the touchpad `InputClass` section in `/etc/X11/xorg.conf.d/40-libinput.conf`:
+Only a press from a device that **physically** has the button counts. Most touchpads have no
+middle button: libinput synthesizes button 2 from a three-finger tap or click, and a palm
+brushing the pad is enough to produce one. The daemon reads the X input source of each press,
+checks the evdev capabilities of that device in `/sys/class/input`, and swallows synthesized
+clicks instead of starting dictation. Clicks injected with `xdotool` are rejected the same way.
+Each rejection is logged:
 
 ```
-Option "ButtonMapping" "1 0 3"
+[trigger] отклонён синтезированный клик от 'Synaptics TM3276-031'
 ```
 
-To apply it to the running session without restarting X:
+The grabbed button no longer reaches applications, so middle-click paste is gone while the
+trigger is enabled. If another X client already grabs the button (for example a leftover
+`xbindkeys`), the daemon logs `already grabbed by another X client` and retries every two
+seconds. It also waits for the X server at boot and reconnects after an X restart.
 
-```bash
-xinput set-button-map "<touchpad name from xinput list>" 1 0 3
-```
-
-**Managing xbindkeys via systemd (recommended):**
-
-Use the provided systemd service template for automatic startup and management:
-
-```bash
-# Copy service template
-cp systemd/xbindkeys.service.in ~/.config/systemd/user/xbindkeys.service
-
-# Enable and start
-systemctl --user daemon-reload
-systemctl --user enable --now xbindkeys
-
-# Check status
-systemctl --user status xbindkeys
-
-# View logs
-journalctl --user -u xbindkeys -f
-```
-
-**Benefits of systemd service:**
-- Automatic startup on login
-- Automatic restart on failure
-- Proper logging via journalctl
-- Integration with systemd user session
-
-**Alternative: Manual start**
-
-If you prefer not to use systemd, you can start xbindkeys manually:
-
-```bash
-xbindkeys
-```
-
-And add to your window manager config for autostart:
-
-```
-# i3/Sway
-exec --no-startup-id xbindkeys
-
-# Hyprland
-exec-once = xbindkeys
-```
-
-**Button codes:** `b:1` — left, `b:2` — middle (touchpad center button), `b:3` — right.
-
-**Note:** `xbindkeys` is the service used to monitor touchpad/mouse button presses. It works in both X11 and Wayland environments. The systemd service ensures xbindkeys starts automatically and restarts if it crashes.
+Requires X11 and `libxcb` with the XInput extension (`xcb-xinput`) at build time. The daemon
+connects with the `DISPLAY` from its service environment; if your X server requires cookie
+authentication, the service also needs `XAUTHORITY`, otherwise the log shows
+`cannot connect to X display` (typing via xdotool is affected the same way).
 
 ### Configuration
 
