@@ -19,7 +19,6 @@ Usage:
 
 import os
 import sys
-from typing import Optional
 
 # Try to import native module
 _native_spelling = None
@@ -157,33 +156,3 @@ def get_error() -> str:
     if not _global_corrector.is_loaded():
         return "Model not loaded"
     return ""
-
-
-# Expose SpellCorrector and SpellCorrectorConfig classes
-def SpellCorrector(model_path: Optional[str] = None):
-    """
-    Create a new SpellCorrector instance.
-
-    Args:
-        model_path: Optional path to model file
-
-    Returns:
-        SpellCorrector instance or None if not available
-    """
-    mod = _get_native_module()
-    if mod is None or not is_available():
-        return None
-
-    if model_path:
-        model_path = os.path.expanduser(model_path)
-        return mod.SpellCorrector(model_path)
-    else:
-        return mod.SpellCorrector()
-
-
-def SpellCorrectorConfig():
-    """Create a new SpellCorrectorConfig instance."""
-    mod = _get_native_module()
-    if mod is None or not is_available():
-        return None
-    return mod.SpellCorrectorConfig()

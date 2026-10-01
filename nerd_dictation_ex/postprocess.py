@@ -16,7 +16,6 @@ from _nerd_dictation_native import postprocess as _native_postprocess
 # Экспортируем нативные классы
 TextAction = _native_postprocess.TextAction
 KeyAction = _native_postprocess.KeyAction
-PostprocessConfig = _native_postprocess.PostprocessConfig
 TextPostProcessor = _native_postprocess.TextPostProcessor
 
 # Тип для удобства
@@ -60,50 +59,3 @@ def is_text_action(action: Action) -> bool:
 def is_key_action(action: Action) -> bool:
     """Проверить является ли действие KeyAction."""
     return isinstance(action, KeyAction)
-
-
-# Для обратной совместимости экспортируем константы (только для чтения)
-# Они теперь определены в C++ в PostprocessConfig::create_default()
-
-KEY_MAP = {
-    "выполнить": "ctrl+Return",
-    "выполнять": "ctrl+Return",
-    "выполняй": "ctrl+Return",
-    "выполни": "ctrl+Return",
-    "выполнил": "ctrl+Return",
-    "выполнял": "ctrl+Return",
-}
-
-PUNCTUATION_MAP = {
-    "точка": ".",
-    "запятая": ",",
-    "двоеточие": ":",
-    "тире": "—",
-    "дефис": "-",
-    "восклицательный знак": "!",
-    "вопросительный знак": "?",
-    "знак вопроса": "?",
-    "многоточие": "...",
-    "кавычки": '"',
-    "кавычка": '"',
-    "открыть кавычки": "«",
-    "закрыть кавычки": "»",
-    "открыть скобку": "(",
-    "закрыть скобку": ")",
-    "новая строка": "\n",
-    "новый абзац": "\n\n",
-    "смайлик улыбка": "😊",
-    "смайлик смех": "😂",
-    "смайлик крутой": "😎",
-    "смайлик грустный": "😢",
-    "смайлик сердце": "❤️",
-    "смайлик огонь": "🔥",
-    "смайлик палец вверх": "👍",
-    "смайлик ок": "👌",
-}
-
-CAPITALIZE_AFTER = {".", "!", "?", "😊", "😂", "😎", "😢", "❤️", "🔥", "👍", "👌"}
-
-NO_SPACE_BEFORE = {".", ",", ":", "!", "?", "-", "...", "»", ")"}
-
-SPACE_BEFORE = {"—"}

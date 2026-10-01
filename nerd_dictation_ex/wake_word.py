@@ -79,9 +79,6 @@ def init(
     return manager.init(config)
 
 
-def is_initialized() -> bool:
-    """Проверить инициализирован ли Wake Word Manager."""
-    return get_manager().is_initialized()
 
 
 def process_speech(audio_bytes: bytes) -> WakeWordResult:
@@ -97,17 +94,6 @@ def process_speech(audio_bytes: bytes) -> WakeWordResult:
     return get_manager().process_speech(audio_bytes)
 
 
-def process_samples(samples: list) -> WakeWordResult:
-    """
-    Обработать аудио семплы и проверить наличие wake word.
-
-    Args:
-        samples: Список int16 значений
-
-    Returns:
-        WakeWordResult с текстом и флагом detected
-    """
-    return get_manager().process_speech_samples(samples)
 
 
 def reset() -> None:
@@ -119,54 +105,12 @@ def reset() -> None:
     get_manager().reset()
 
 
-def get_wake_word() -> str:
-    """Получить текущее wake word."""
-    return get_manager().wake_word
 
 
-def set_wake_word(word: str, variants: list = None) -> None:
-    """
-    Установить wake word и варианты.
-
-    Args:
-        word: Основное слово
-        variants: Альтернативные формы (опционально)
-    """
-    get_manager().set_wake_word(word, variants or [])
 
 
-def get_sample_rate() -> int:
-    """Получить частоту дискретизации."""
-    return get_manager().sample_rate
 
 
 def get_error() -> str:
     """Получить последнее сообщение об ошибке."""
     return get_manager().get_error()
-
-
-def find_model() -> str:
-    """
-    Найти путь к Vosk модели для wake word detection.
-
-    Поиск в порядке приоритета:
-    1. ~/.local/share/vosk/vosk-model-small-ru
-    2. /usr/share/vosk/vosk-model-small-ru
-
-    Returns:
-        Путь к модели или пустая строка если не найдена
-    """
-    return _native_wake_word.find_model()
-
-
-def model_exists(path: str) -> bool:
-    """
-    Проверить существует ли Vosk модель по указанному пути.
-
-    Args:
-        path: Путь к директории модели
-
-    Returns:
-        True если модель существует
-    """
-    return _native_wake_word.model_exists(path)

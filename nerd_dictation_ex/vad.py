@@ -86,20 +86,6 @@ def process_chunk(audio_bytes: bytes) -> VADResult:
     return get_manager().process_chunk(audio_bytes)
 
 
-def process_samples(samples: list) -> VADResult:
-    """
-    Обработать аудио семплы и получить вероятность речи.
-
-    Args:
-        samples: Список int16 значений
-                 Размер должен быть 512 для 16kHz или 256 для 8kHz
-
-    Returns:
-        VADResult с speech_probability и is_speech
-    """
-    return get_manager().process_chunk_samples(samples)
-
-
 def reset_states() -> None:
     """
     Сбросить внутреннее состояние VAD.
@@ -108,21 +94,6 @@ def reset_states() -> None:
     НЕ во время idle или wake word детекции!
     """
     get_manager().reset_states()
-
-
-def get_threshold() -> float:
-    """Получить текущий порог детекции речи."""
-    return get_manager().threshold
-
-
-def set_threshold(threshold: float) -> None:
-    """Установить порог детекции речи (0.0-1.0)."""
-    get_manager().threshold = threshold
-
-
-def get_sample_rate() -> int:
-    """Получить частоту дискретизации."""
-    return get_manager().sample_rate
 
 
 def get_chunk_size() -> int:
@@ -138,21 +109,6 @@ def get_chunk_size() -> int:
 def get_error() -> str:
     """Получить последнее сообщение об ошибке."""
     return get_manager().get_error()
-
-
-def find_model() -> str:
-    """
-    Найти путь к Silero VAD модели.
-
-    Поиск в порядке приоритета:
-    1. ~/.cache/torch/hub/snakers4_silero-vad_master/src/silero_vad/data/silero_vad.onnx
-    2. ~/.local/share/nerd-dictation/silero_vad.onnx
-    3. /usr/share/nerd-dictation/silero_vad.onnx
-
-    Returns:
-        Путь к модели или пустая строка если не найдена
-    """
-    return _native_vad.find_vad_model()
 
 
 class NativeVADIterator:

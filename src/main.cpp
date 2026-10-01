@@ -81,7 +81,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def_readwrite("streaming", &nerd_dictation::BackendInfo::streaming)
         .def_readwrite("sample_rate", &nerd_dictation::BackendInfo::sample_rate)
         .def_readwrite("channels", &nerd_dictation::BackendInfo::channels)
-        .def_readwrite("bits_per_sample", &nerd_dictation::BackendInfo::bits_per_sample)
         .def("__repr__", [](const nerd_dictation::BackendInfo& i) {
             return "<BackendInfo name='" + i.name + "' streaming=" +
                    (i.streaming ? "True" : "False") + " sample_rate=" +
@@ -109,11 +108,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
             self.feed(samples.data(), samples.size());
         }, py::arg("audio_bytes"),
            "Feed audio data (raw int16 PCM bytes)")
-        .def("feed_samples", [](nerd_dictation::Backend& self, const std::vector<int16_t>& samples) {
-            py::gil_scoped_release unlock;
-            self.feed(samples);
-        }, py::arg("samples"),
-           "Feed audio samples (list of int16)")
         .def("result", &nerd_dictation::Backend::result,
              py::call_guard<py::gil_scoped_release>(),
              "Get current result")
@@ -174,11 +168,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
             return self.process_chunk(samples);
         }, py::arg("audio_bytes"),
            "Process audio chunk (raw int16 PCM bytes) and get VAD result")
-        .def("process_chunk_samples", [](nerd_dictation::vad::VADManager& self, const std::vector<int16_t>& samples) {
-            py::gil_scoped_release unlock;
-            return self.process_chunk(samples);
-        }, py::arg("samples"),
-           "Process audio samples (list of int16) and get VAD result")
         .def("reset_states", &nerd_dictation::vad::VADManager::reset_states,
              py::call_guard<py::gil_scoped_release>(),
              "Reset internal states for new session")
@@ -197,8 +186,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
              "Get last error message");
 
     // Helper function to find default model
-    vad.def("find_vad_model", &nerd_dictation::vad::find_vad_model,
-            "Find default Silero VAD model path");
 #endif
 
 #ifdef HAVE_VOSK
@@ -251,12 +238,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
             return self.process_speech(audio.data(), audio.size());
         }, py::arg("audio_bytes"),
            "Process speech audio and check for wake word")
-        .def("process_speech_samples", [](nerd_dictation::wake_word::WakeWordManager& self,
-                                          const std::vector<int16_t>& samples) {
-            py::gil_scoped_release unlock;
-            return self.process_speech(samples);
-        }, py::arg("samples"),
-           "Process speech samples (list of int16)")
         .def("reset", &nerd_dictation::wake_word::WakeWordManager::reset,
              py::call_guard<py::gil_scoped_release>(),
              "Reset recognizer state")
@@ -270,10 +251,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
                           },
                           py::call_guard<py::gil_scoped_release>()),
                       "Current wake word")
-        .def("set_wake_word", &nerd_dictation::wake_word::WakeWordManager::set_wake_word,
-             py::call_guard<py::gil_scoped_release>(),
-             py::arg("word"), py::arg("variants") = std::vector<std::string>{},
-             "Set wake word and optional variants")
         .def_property_readonly("sample_rate", &nerd_dictation::wake_word::WakeWordManager::sample_rate,
                                "Audio sample rate")
         .def("get_error", &nerd_dictation::wake_word::WakeWordManager::get_error,
@@ -281,10 +258,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
              "Get last error message");
 
     // Helper functions
-    wake_word.def("find_model", &nerd_dictation::wake_word::find_wake_word_model,
-                  "Find default Vosk model for wake word detection");
-    wake_word.def("model_exists", &nerd_dictation::wake_word::vosk_model_exists,
-                  py::arg("path"), "Check if Vosk model exists at path");
 #endif
 
 #ifdef HAVE_XCB_XINPUT
@@ -339,21 +312,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
             return "<KeyAction keys='" + a.keys + "'>";
         });
 
-    // PostprocessConfig class
-    py::class_<nerd_dictation::postprocess::PostprocessConfig>(postprocess, "PostprocessConfig")
-        .def(py::init<>())
-        .def_static("create_default", &nerd_dictation::postprocess::PostprocessConfig::create_default,
-                    "Create default Russian configuration")
-        .def_readwrite("key_map", &nerd_dictation::postprocess::PostprocessConfig::key_map,
-                       "Word -> key combination mappings")
-        .def_readwrite("punctuation_map", &nerd_dictation::postprocess::PostprocessConfig::punctuation_map,
-                       "Word -> punctuation mappings")
-        .def_readwrite("capitalize_after", &nerd_dictation::postprocess::PostprocessConfig::capitalize_after,
-                       "Characters after which to capitalize")
-        .def_readwrite("no_space_before", &nerd_dictation::postprocess::PostprocessConfig::no_space_before,
-                       "Characters before which to remove space")
-        .def_readwrite("space_before", &nerd_dictation::postprocess::PostprocessConfig::space_before,
-                       "Characters before which to add space");
 
     // TextPostProcessor singleton
     py::class_<nerd_dictation::postprocess::TextPostProcessor,
@@ -377,9 +335,7 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         }, py::arg("text"),
            "Process text: replace words with punctuation/keys, apply capitalization")
         .def("reset", &nerd_dictation::postprocess::TextPostProcessor::reset,
-             "Reset state (start new dictation)")
-        .def("set_config", &nerd_dictation::postprocess::TextPostProcessor::set_config,
-             py::arg("config"), "Set new configuration");
+             "Reset state (start new dictation)");
 
     // Helper functions
     postprocess.def("process_text", [](const std::string& text) {
@@ -429,9 +385,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def_readwrite("agc_enabled",
                        &nerd_dictation::audio::AudioPreprocessor::Config::agc_enabled,
                        "Enable Automatic Gain Control")
-        .def_readwrite("agc_target_level_dbfs",
-                       &nerd_dictation::audio::AudioPreprocessor::Config::agc_target_level_dbfs,
-                       "AGC target level in dBFS (default: 3.0)")
         .def_readwrite("high_pass_filter_enabled",
                        &nerd_dictation::audio::AudioPreprocessor::Config::high_pass_filter_enabled,
                        "Enable high-pass filter to remove DC offset");
@@ -491,22 +444,7 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
             return py::bytes(reinterpret_cast<const char*>(output.data()),
                             result * sizeof(int16_t));
         }, py::arg("audio_bytes"),
-           "Process audio chunk (raw int16 PCM bytes)")
-        .def("process_samples", [](nerd_dictation::audio::AudioPreprocessor& self,
-                                   const std::vector<int16_t>& samples) {
-            std::vector<int16_t> output(samples.size());
-            int result;
-            {
-                py::gil_scoped_release unlock;
-                result = self.process(samples.data(), samples.size(), output.data());
-            }
-            if (result < 0) {
-                throw std::runtime_error("AudioPreprocessor::process() failed");
-            }
-            output.resize(result);
-            return output;
-        }, py::arg("samples"),
-           "Process audio samples (list of int16)");
+           "Process audio chunk (raw int16 PCM bytes)");
 
 #ifdef HAVE_JAMSPELL
     // ==========================================================================
@@ -526,10 +464,7 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
                        "Penalty for known words (higher = less likely to correct)")
         .def_readwrite("unknown_words_penalty",
                        &nerd_dictation::spelling::SpellCorrectorConfig::unknown_words_penalty,
-                       "Penalty for unknown words (higher = more likely to correct)")
-        .def_readwrite("max_candidates",
-                       &nerd_dictation::spelling::SpellCorrectorConfig::max_candidates,
-                       "Maximum candidates to check per word");
+                       "Penalty for unknown words (higher = more likely to correct)");
 
     // SpellCorrector class
     py::class_<nerd_dictation::spelling::SpellCorrector>(spelling, "SpellCorrector")
@@ -553,10 +488,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def("word_is_known", &nerd_dictation::spelling::SpellCorrector::word_is_known,
              py::call_guard<py::gil_scoped_release>(),
              py::arg("word"), "Check if word is in vocabulary")
-        .def("set_penalties", &nerd_dictation::spelling::SpellCorrector::set_penalties,
-             py::call_guard<py::gil_scoped_release>(),
-             py::arg("known_penalty"), py::arg("unknown_penalty"),
-             "Set correction penalties")
         .def_property_readonly("config",
                                &nerd_dictation::spelling::SpellCorrector::config,
                                "Get current configuration");
