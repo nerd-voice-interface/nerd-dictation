@@ -5,15 +5,10 @@ set(TEST_SOURCES
     test_backend_wrapper.cpp
     test_postprocess.cpp
     test_input_simulator.cpp
-    test_config.cpp
-    test_daemon.cpp
     test_resampler.cpp
     # Source files for components being tested
     ${CMAKE_SOURCE_DIR}/src/input/input_simulator.cpp
-    ${CMAKE_SOURCE_DIR}/src/input/postprocess.cpp
     ${CMAKE_SOURCE_DIR}/src/postprocess/text_postprocessor.cpp
-    ${CMAKE_SOURCE_DIR}/src/config/config.cpp
-    ${CMAKE_SOURCE_DIR}/src/daemon/daemon.cpp
     ${CMAKE_SOURCE_DIR}/src/audio/audio_preprocessor.cpp
     ${CMAKE_SOURCE_DIR}/src/audio/resampler.cpp
     ${CMAKE_SOURCE_DIR}/src/sounds/sounds.cpp
@@ -56,20 +51,6 @@ target_include_directories(nerd-dictation-tests
     ${SAMPLERATE_INCLUDE_DIRS}
 )
 
-# TOML11, CLI11, Eigen includes
-if(TOML11_FOUND)
-    target_include_directories(nerd-dictation-tests PRIVATE ${TOML11_INCLUDE})
-endif()
-if(CLI11_FOUND)
-    target_include_directories(nerd-dictation-tests PRIVATE ${CLI11_INCLUDE})
-endif()
-if(TARGET Eigen3::Eigen)
-    # Eigen is header-only, handled via include
-else()
-    find_package(Eigen3 REQUIRED)
-    target_include_directories(nerd-dictation-tests PRIVATE ${EIGEN3_INCLUDE_DIR})
-endif()
-
 # Link with main project libraries and dependencies
 # NOTE: Do NOT link against any backend (dummy, t-one, etc.) to avoid symbol conflicts
 # when loading different backends via dlopen at runtime
@@ -97,7 +78,7 @@ if(SPDLOG_FOUND)
 endif()
 
 # Compile definitions
-target_compile_definitions(nerd-dictation-tests PRIVATE HAVE_EIGEN HAVE_EMBEDDED_SOUNDS=0)
+target_compile_definitions(nerd-dictation-tests PRIVATE HAVE_EMBEDDED_SOUNDS=0)
 if(PULSE_SIMPLE_FOUND)
     target_compile_definitions(nerd-dictation-tests PRIVATE HAVE_PULSEAUDIO)
 endif()

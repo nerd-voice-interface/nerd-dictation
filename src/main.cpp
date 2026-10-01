@@ -1,14 +1,8 @@
-#include "nerd_dictation/config.hpp"
-#include "nerd_dictation/daemon/daemon.hpp"
 #include "nerd_dictation/input/input_simulator.hpp"
-#include "nerd_dictation/input/postprocess.hpp"
 #include "nerd_dictation/sounds/sounds.hpp"
-#include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -19,7 +13,6 @@
 #include <ctime>
 #include <fcntl.h>
 
-#ifdef HAVE_PYTHON
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
@@ -576,7 +569,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
     spelling.attr("available") = false;
 #endif
 }
-#endif
 
 /* ============================================================================
  * Crash handler with backtrace
@@ -663,7 +655,6 @@ int main(int argc, char* argv[]) {
     spdlog::set_default_logger(logger);
     spdlog::set_level(spdlog::level::info);
 
-#ifdef HAVE_PYTHON
     // ========================================================================
     // Python-based processing via cli.py
     // ========================================================================
@@ -730,230 +721,4 @@ int main(int argc, char* argv[]) {
     py::finalize_interpreter();
 
     return exit_code;
-#else
-    // ========================================================================
-    // Native C++ CLI (replicates Python cli.py functionality)
-    // ========================================================================
-
-    // Socket paths (same as Python cli.py)
-    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
-    std::string socket_path = runtime_dir ?
-        std::string(runtime_dir) + "/nerd-dictation-ex.sock" :
-        "/tmp/nerd-dictation-ex.sock";
-    std::string pid_file = runtime_dir ?
-        std::string(runtime_dir) + "/nerd-dictation-ex.pid" :
-        "/tmp/nerd-dictation-ex.pid";
-
-    // ========================================================================
-    // DaemonClient - send commands to daemon via Unix socket
-    // ========================================================================
-    auto send_command = [&socket_path](const std::string& action, float timeout_sec = 5.0f) -> std::pair<bool, std::string> {
-        int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (sock < 0) {
-            return {false, "Failed to create socket"};
-        }
-
-        // Set socket timeout
-        struct timeval tv;
-        tv.tv_sec = static_cast<long>(timeout_sec);
-        tv.tv_usec = static_cast<long>((timeout_sec - tv.tv_sec) * 1000000);
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-        struct sockaddr_un addr;
-        std::memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-
-        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-            close(sock);
-            return {false, "Daemon is not running"};
-        }
-
-        // Send JSON command
-        std::string cmd = R"({"action":")" + action + R"("})";
-        if (write(sock, cmd.c_str(), cmd.length()) < 0) {
-            close(sock);
-            return {false, "Failed to send command"};
-        }
-
-        // Read response
-        char buffer[4096];
-        ssize_t n = read(sock, buffer, sizeof(buffer) - 1);
-        close(sock);
-
-        if (n > 0) {
-            buffer[n] = '\0';
-            return {true, std::string(buffer)};
-        }
-
-        return {false, "No response from daemon"};
-    };
-
-    auto is_daemon_running = [&pid_file]() -> bool {
-        std::ifstream pid_stream(pid_file);
-        if (!pid_stream.is_open()) {
-            return false;
-        }
-        int pid;
-        pid_stream >> pid;
-        if (pid <= 0) {
-            return false;
-        }
-        // Check if process exists
-        return kill(pid, 0) == 0;
-    };
-
-    auto get_daemon_state = [&send_command]() -> std::string {
-        auto [ok, response] = send_command("status");
-        if (!ok) return "unknown";
-        // Simple JSON parsing: find "state":"..."
-        size_t pos = response.find("\"state\":");
-        if (pos == std::string::npos) return "unknown";
-        pos = response.find("\"", pos + 8);
-        if (pos == std::string::npos) return "unknown";
-        size_t end = response.find("\"", pos + 1);
-        if (end == std::string::npos) return "unknown";
-        return response.substr(pos + 1, end - pos - 1);
-    };
-
-    // ========================================================================
-    // CLI parsing with CLI11
-    // ========================================================================
-    CLI::App app{"nerd-dictation — speech dictation with pluggable ASR backends"};
-    app.require_subcommand(1);
-
-    // Subcommands
-    auto daemon_cmd = app.add_subcommand("daemon", "Start daemon (for systemd)");
-
-    auto begin_cmd = app.add_subcommand("begin", "Start dictation");
-    std::string backend_override;
-    begin_cmd->add_option("-b,--backend", backend_override, "Backend (overrides config)");
-
-    auto end_cmd = app.add_subcommand("end", "End dictation");
-
-    auto cancel_cmd = app.add_subcommand("cancel", "Cancel dictation (discard text)");
-
-    auto toggle_cmd = app.add_subcommand("toggle", "Toggle dictation (begin/end)");
-
-    auto status_cmd = app.add_subcommand("status", "Get daemon status");
-
-    CLI11_PARSE(app, argc, argv);
-
-    // ========================================================================
-    // Command handlers
-    // ========================================================================
-
-    // DAEMON command
-    if (*daemon_cmd) {
-        spdlog::info("Starting daemon...");
-
-        // Load configuration
-        auto config_path_opt = nerd_dictation::find_config_file();
-        nerd_dictation::Config config;
-        if (config_path_opt) {
-            config = nerd_dictation::load_config(*config_path_opt);
-            spdlog::info("Config loaded from: {}", config_path_opt->string());
-        }
-
-        // Create and run daemon
-        nerd_dictation::daemon::DictationDaemon daemon(config);
-        daemon.run();
-        return 0;
-    }
-
-    // BEGIN command
-    if (*begin_cmd) {
-        if (is_daemon_running()) {
-            auto [ok, response] = send_command("begin");
-            if (ok && response.find("\"status\":\"ok\"") != std::string::npos) {
-                std::cerr << "Dictation started" << std::endl;
-                return 0;
-            } else {
-                std::cerr << "Error: " << response << std::endl;
-                return 1;
-            }
-        } else {
-            std::cerr << "Daemon is not running. Start it with: systemctl --user start nerd-dictation" << std::endl;
-            return 1;
-        }
-    }
-
-    // END command
-    if (*end_cmd) {
-        if (is_daemon_running()) {
-            auto [ok, response] = send_command("end");
-            if (ok && response.find("\"status\":\"ok\"") != std::string::npos) {
-                std::cerr << "Dictation ended" << std::endl;
-                return 0;
-            } else {
-                std::cerr << "Error: " << response << std::endl;
-                return 1;
-            }
-        } else {
-            std::cerr << "Daemon is not running" << std::endl;
-            return 1;
-        }
-    }
-
-    // CANCEL command
-    if (*cancel_cmd) {
-        if (is_daemon_running()) {
-            auto [ok, response] = send_command("cancel");
-            if (ok && response.find("\"status\":\"ok\"") != std::string::npos) {
-                std::cerr << "Dictation cancelled" << std::endl;
-                return 0;
-            } else {
-                std::cerr << "Error: " << response << std::endl;
-                return 1;
-            }
-        } else {
-            std::cerr << "Daemon is not running" << std::endl;
-            return 1;
-        }
-    }
-
-    // TOGGLE command
-    if (*toggle_cmd) {
-        if (is_daemon_running()) {
-            std::string state = get_daemon_state();
-            if (state == "listening") {
-                auto [ok, response] = send_command("end");
-                if (ok && response.find("\"status\":\"ok\"") != std::string::npos) {
-                    std::cerr << "Dictation ended" << std::endl;
-                    return 0;
-                }
-            } else {
-                auto [ok, response] = send_command("begin");
-                if (ok && response.find("\"status\":\"ok\"") != std::string::npos) {
-                    std::cerr << "Dictation started" << std::endl;
-                    return 0;
-                }
-            }
-            return 1;
-        } else {
-            std::cerr << "Daemon is not running. Start it with: systemctl --user start nerd-dictation" << std::endl;
-            return 1;
-        }
-    }
-
-    // STATUS command
-    if (*status_cmd) {
-        if (is_daemon_running()) {
-            auto [ok, response] = send_command("status");
-            if (ok) {
-                std::cout << response << std::endl;
-                return 0;
-            } else {
-                std::cerr << "Error: " << response << std::endl;
-                return 1;
-            }
-        } else {
-            std::cout << R"({"status":"error","message":"Daemon is not running"})" << std::endl;
-            return 1;
-        }
-    }
-
-    return 0;
-#endif
 }

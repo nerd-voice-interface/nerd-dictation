@@ -134,36 +134,6 @@ endif()
 # Git Submodules from ThirdParty
 # ============================================================================
 
-# TOML11 (header-only)
-if(EXISTS "${THIRDPARTY_DIR}/toml11")
-    message(STATUS "Using TOML11 from ThirdParty submodule")
-    # toml11 has structure: include/toml.hpp or include/toml11/toml.hpp
-    if(EXISTS "${THIRDPARTY_DIR}/toml11/include/toml11/toml.hpp")
-        set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11/include")
-    elseif(EXISTS "${THIRDPARTY_DIR}/toml11/include/toml.hpp")
-        set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11/include")
-    else()
-        set(TOML11_INCLUDE "${THIRDPARTY_DIR}/toml11")
-    endif()
-    set(TOML11_FOUND TRUE)
-else()
-    # Try to find system version
-    find_path(TOML11_INCLUDE
-        NAMES toml11/toml.hpp
-        PATHS
-            /usr/include
-            /usr/local/include
-    )
-    if(TOML11_INCLUDE)
-        message(STATUS "Using system TOML11: ${TOML11_INCLUDE}")
-        set(TOML11_FOUND TRUE)
-    else()
-        message(FATAL_ERROR "TOML11 not found. Initialize submodule:")
-        message(FATAL_ERROR "  git submodule add https://github.com/ToruNiina/toml11.git ThirdParty/toml11")
-        message(FATAL_ERROR "  git submodule update --init --recursive")
-    endif()
-endif()
-
 # spdlog
 if(EXISTS "${THIRDPARTY_DIR}/spdlog")
     message(STATUS "Using spdlog from ThirdParty submodule")
@@ -183,47 +153,6 @@ else()
     endif()
 endif()
 
-# CLI11 (header-only)
-if(EXISTS "${THIRDPARTY_DIR}/CLI11")
-    message(STATUS "Using CLI11 from ThirdParty submodule")
-    set(CLI11_INCLUDE "${THIRDPARTY_DIR}/CLI11/include")
-    set(CLI11_FOUND TRUE)
-else()
-    # Try to find system version
-    find_path(CLI11_INCLUDE
-        NAMES CLI/CLI.hpp
-        PATHS
-            /usr/include
-            /usr/local/include
-    )
-    if(CLI11_INCLUDE)
-        message(STATUS "Using system CLI11: ${CLI11_INCLUDE}")
-        set(CLI11_FOUND TRUE)
-    else()
-        message(FATAL_ERROR "CLI11 not found. Initialize submodule:")
-        message(FATAL_ERROR "  git submodule add https://github.com/CLIUtils/CLI11.git ThirdParty/CLI11")
-        message(FATAL_ERROR "  git submodule update --init --recursive")
-    endif()
-endif()
-
-# Eigen (required, for noise suppression)
-if(EXISTS "${THIRDPARTY_DIR}/eigen")
-    message(STATUS "Using Eigen from ThirdParty submodule")
-    add_subdirectory(${THIRDPARTY_DIR}/eigen)
-    set(EIGEN_FOUND TRUE)
-else()
-    find_package(Eigen3 REQUIRED)
-    if(Eigen3_FOUND)
-        message(STATUS "Using system Eigen3")
-        set(EIGEN_FOUND TRUE)
-    else()
-        message(FATAL_ERROR "Eigen not found. Initialize submodule:")
-        message(FATAL_ERROR "  git submodule add https://gitlab.com/libeigen/eigen.git ThirdParty/eigen")
-        message(FATAL_ERROR "  git submodule update --init --recursive")
-        message(FATAL_ERROR "Or install system package: sudo pacman -S eigen")
-    endif()
-endif()
-
 # res_embed (for embedding sound files)
 if(EXISTS "${THIRDPARTY_DIR}/res_embed")
     message(STATUS "Using res_embed from ThirdParty submodule")
@@ -240,7 +169,6 @@ if(EXISTS "${THIRDPARTY_DIR}/pybind11")
     message(STATUS "Using pybind11 from ThirdParty submodule")
     find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
     add_subdirectory(${THIRDPARTY_DIR}/pybind11)
-    set(PYBIND11_FOUND TRUE)
     message(STATUS "Python3 found: ${Python3_VERSION}")
     message(STATUS "  Interpreter: ${Python3_EXECUTABLE}")
     message(STATUS "  Include dirs: ${Python3_INCLUDE_DIRS}")
@@ -351,11 +279,8 @@ file(MAKE_DIRECTORY ${SOURCE_DIR})
 
 set(SOURCES
     ${SOURCE_DIR}/main.cpp
-    ${SOURCE_DIR}/config/config.cpp
     ${SOURCE_DIR}/input/input_simulator.cpp
-    ${SOURCE_DIR}/input/postprocess.cpp
     ${SOURCE_DIR}/sounds/sounds.cpp
-    ${SOURCE_DIR}/daemon/daemon.cpp
     ${SOURCE_DIR}/audio/audio_preprocessor.cpp
     ${SOURCE_DIR}/audio/resampler.cpp
     ${SOURCE_DIR}/postprocess/text_postprocessor.cpp
@@ -382,13 +307,9 @@ if(JAMSPELL_FOUND)
 endif()
 
 set(HEADERS
-    ${INCLUDE_DIR}/nerd_dictation/types.hpp
-    ${INCLUDE_DIR}/nerd_dictation/config.hpp
     ${INCLUDE_DIR}/nerd_dictation/backend_wrapper.hpp
     ${INCLUDE_DIR}/nerd_dictation/input/input_simulator.hpp
-    ${INCLUDE_DIR}/nerd_dictation/input/postprocess.hpp
     ${INCLUDE_DIR}/nerd_dictation/sounds/sounds.hpp
-    ${INCLUDE_DIR}/nerd_dictation/daemon/daemon.hpp
     ${INCLUDE_DIR}/nerd_dictation/audio/audio_preprocessor.hpp
     ${INCLUDE_DIR}/nerd_dictation/audio/resampler.hpp
     ${INCLUDE_DIR}/nerd_dictation/postprocess/text_postprocessor.hpp
@@ -477,16 +398,6 @@ target_include_directories(${PROJECT_NAME}
     ${SAMPLERATE_INCLUDE_DIRS}
 )
 
-# TOML11 (header-only)
-if(TOML11_FOUND)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${TOML11_INCLUDE})
-endif()
-
-# CLI11 (header-only)
-if(CLI11_FOUND)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${CLI11_INCLUDE})
-endif()
-
 # nerd-dictation-api (header-only)
 if(NERD_DICTATION_API_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${NERD_DICTATION_API_INCLUDE})
@@ -526,26 +437,12 @@ if(SPDLOG_FOUND)
     endif()
 endif()
 
-# Eigen (required)
-if(TARGET Eigen3::Eigen)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Eigen3::Eigen)
-else()
-    # Fallback for system Eigen
-    find_package(Eigen3 REQUIRED)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${EIGEN3_INCLUDE_DIR})
-endif()
-target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_EIGEN)
-
-# Python/pybind11 (for embedded Python processing)
-if(PYBIND11_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE pybind11::embed)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_PYTHON)
-    # Set Python scripts directory and venv path
-    target_compile_definitions(${PROJECT_NAME} PRIVATE
-        PYTHON_SCRIPTS_DIR="${CMAKE_SOURCE_DIR}"
-        PYTHON_VENV_SITE_PACKAGES="${CMAKE_SOURCE_DIR}/.venv/lib/python3.14/site-packages"
-    )
-endif()
+# Python/pybind11: the program is a Python daemon on an embedded interpreter
+target_link_libraries(${PROJECT_NAME} PRIVATE pybind11::embed)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    PYTHON_SCRIPTS_DIR="${CMAKE_SOURCE_DIR}"
+    PYTHON_VENV_SITE_PACKAGES="${CMAKE_SOURCE_DIR}/.venv/lib/python3.14/site-packages"
+)
 
 # ONNX Runtime (for Silero VAD)
 if(ONNXRUNTIME_FOUND)
@@ -579,9 +476,6 @@ endif()
 
 # Install executable
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
-
-# Install configuration files (if any)
-# install(FILES config/default.toml DESTINATION share/nerd-dictation)
 
 # Install headers (for development)
 install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
@@ -675,10 +569,7 @@ message(STATUS "")
 message(STATUS "Core Dependencies:")
 message(STATUS "  PipeWire: ${PIPEWIRE_VERSION}")
 message(STATUS "  PulseAudio Simple: ${PULSE_SIMPLE_FOUND}")
-message(STATUS "  TOML11: ${TOML11_FOUND}")
 message(STATUS "  spdlog: ${SPDLOG_FOUND}")
-message(STATUS "  CLI11: ${CLI11_FOUND}")
-message(STATUS "  Eigen: ${EIGEN_FOUND}")
 message(STATUS "  res_embed: ${RES_EMBED_FOUND} (embedded sounds)")
 message(STATUS "")
 message(STATUS "Voice Activity Detection:")
