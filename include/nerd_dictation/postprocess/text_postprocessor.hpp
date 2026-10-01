@@ -165,6 +165,7 @@ private:
     std::vector<Action> extract_key_actions(const std::string& text);
     std::string process_text_fragment(const std::string& text);
     std::string replace_punctuation(const std::string& text);
+    std::string normalize_spaces(const std::string& text);
     std::string apply_capitalization(const std::string& text);
 };
 

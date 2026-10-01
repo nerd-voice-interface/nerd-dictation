@@ -7,10 +7,10 @@ set(TEST_SOURCES
     test_input_simulator.cpp
     test_config.cpp
     test_daemon.cpp
-    test_wake_word.cpp
     # Source files for components being tested
     ${CMAKE_SOURCE_DIR}/src/input/input_simulator.cpp
     ${CMAKE_SOURCE_DIR}/src/input/postprocess.cpp
+    ${CMAKE_SOURCE_DIR}/src/postprocess/text_postprocessor.cpp
     ${CMAKE_SOURCE_DIR}/src/config/config.cpp
     ${CMAKE_SOURCE_DIR}/src/daemon/daemon.cpp
     ${CMAKE_SOURCE_DIR}/src/audio/audio_preprocessor.cpp
@@ -24,7 +24,18 @@ if(XCB_XINPUT_FOUND)
     )
 endif()
 
+if(VOSK_FOUND)
+    list(APPEND TEST_SOURCES
+        test_wake_word.cpp
+        ${CMAKE_SOURCE_DIR}/src/wake_word/wake_word_manager.cpp
+    )
+endif()
+
 add_executable(nerd-dictation-tests ${TEST_SOURCES})
+
+if(VOSK_FOUND)
+    target_link_libraries(nerd-dictation-tests PRIVATE ${VOSK_LIBRARY})
+endif()
 
 if(XCB_XINPUT_FOUND)
     target_link_libraries(nerd-dictation-tests PRIVATE ${XCB_XINPUT_LIBRARIES})

@@ -392,7 +392,8 @@ PostprocessConfig PostprocessConfig::create_default() {
     // Characters after which to capitalize next word
     config.capitalize_after = {
         ".", "!", "?",
-        "😊", "😂", "😎", "😢", "❤️", "🔥", "👍", "👌"
+        "😊", "😂", "😎", "😢", "❤️", "🔥", "👍", "👌",
+        "\n"
     };
 
     // Characters before which to remove space
@@ -525,8 +526,14 @@ std::vector<Action> TextPostProcessor::extract_key_actions(const std::string& te
 }
 
 std::string TextPostProcessor::process_text_fragment(const std::string& text) {
+    // Normalize multiple spaces to single spaces first
+    std::string result = normalize_spaces(text);
+
     // Replace words with punctuation
-    std::string result = replace_punctuation(text);
+    result = replace_punctuation(result);
+
+    // Normalize spaces again after punctuation replacement
+    result = normalize_spaces(result);
 
     // Trim whitespace
     size_t start = 0;
@@ -566,6 +573,34 @@ std::string TextPostProcessor::process_text_fragment(const std::string& text) {
     return result;
 }
 
+std::string TextPostProcessor::normalize_spaces(const std::string& text) {
+    if (text.empty()) {
+        return text;
+    }
+
+    std::string result;
+    result.reserve(text.length());
+
+    bool in_space = false;
+    for (size_t i = 0; i < text.length(); ++i) {
+        char c = text[i];
+
+        // Check if it's a space character (but not newline)
+        if (c == ' ' || c == '\t' || c == '\r') {
+            if (!in_space) {
+                result += ' '; // Add single space
+                in_space = true;
+            }
+            // Skip additional spaces
+        } else {
+            in_space = false;
+            result += c;
+        }
+    }
+
+    return result;
+}
+
 std::string TextPostProcessor::replace_punctuation(const std::string& text) {
     // Sort punctuation_map entries by length (longest first)
     std::vector<std::pair<std::string, std::string>> sorted_punct(
@@ -590,6 +625,42 @@ std::string TextPostProcessor::replace_punctuation(const std::string& text) {
         while ((pos = result.find(pattern)) != std::string::npos) {
             result.replace(pos, pattern.size(), punct);
         }
+    }
+
+    // Special handling for paired punctuation (quotes, parentheses)
+    // Remove spaces inside quotes: « текст » -> «текст»
+    // « is 2 bytes (0xC2 0xAB), » is 2 bytes (0xC2 0xBB)
+    size_t quote_pos = 0;
+    while ((quote_pos = result.find("«", quote_pos)) != std::string::npos) {
+        // Check if there's a space after opening quote
+        if (quote_pos + 2 < result.length() && result[quote_pos + 2] == ' ') {
+            // Remove space after opening quote
+            result.erase(quote_pos + 2, 1);
+        }
+
+        // Find corresponding closing quote
+        size_t close_quote = result.find("»", quote_pos + 2);
+        if (close_quote != std::string::npos && close_quote > 0 && result[close_quote - 1] == ' ') {
+            // Remove space before closing quote
+            result.erase(close_quote - 1, 1);
+            quote_pos = close_quote;
+        } else {
+            quote_pos += 2; // Move past the opening quote (2 bytes)
+        }
+    }
+
+    // Remove spaces inside parentheses: ( текст ) -> (текст)
+    size_t paren_pos = 0;
+    while ((paren_pos = result.find("( ", paren_pos)) != std::string::npos) {
+        // Remove space after opening paren
+        result.replace(paren_pos, 2, "(");
+        // Find corresponding closing paren
+        size_t close_paren = result.find(" )", paren_pos);
+        if (close_paren != std::string::npos) {
+            // Remove space before closing paren
+            result.replace(close_paren, 2, ")");
+        }
+        paren_pos += 1; // Move past the paren
     }
 
     // Add space before certain punctuation (Russian typography, e.g., em-dash)

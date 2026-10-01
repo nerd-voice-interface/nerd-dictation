@@ -1,368 +1,221 @@
+/**
+ * Tests for the live wake word detector: nerd_dictation::wake_word::WakeWordManager.
+ *
+ * Mirrors how the daemon uses it (nerd_dictation_ex/cli.py,
+ * _start_wake_word_detection / _wake_word_loop): word "запись", variant
+ * "записи", Vosk model ~/.local/share/vosk/vosk-model-small-ru, int16 mono
+ * speech segments fed to process_speech(), reset() between utterances.
+ *
+ * Real recordings from test-samples/:
+ *  - wake-word-zapis.wav (8 kHz, says "запись") must be detected;
+ *  - the phrase samples NN-*.wav (16 kHz, none contains the wake word per
+ *    scripts/record-test-samples.py) must not.
+ *
+ * The recognizer always runs at 16 kHz, exactly as in the daemon. Vosk does
+ * NOT resample: a recognizer created for 8 kHz on this 16 kHz model logs
+ * "Sampling frequency mismatch, expected 16000, got 8000" and returns empty
+ * text. The 8 kHz wake word recording (made for t-one) is therefore
+ * upsampled x2 here before feeding — a test input adapter, not product code.
+ */
+
 #include <gtest/gtest.h>
-#include "nerd_dictation/daemon/daemon.hpp"
-#include "nerd_dictation/config.hpp"
-#include <thread>
-#include <chrono>
-#include <fstream>
-#include <filesystem>
+
+#include "nerd_dictation/wake_word/wake_word_manager.hpp"
+
+#include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <string>
 #include <vector>
-#include <memory>
 
-using namespace nerd_dictation;
-using namespace nerd_dictation::daemon;
+using nerd_dictation::wake_word::WakeWordConfig;
+using nerd_dictation::wake_word::WakeWordManager;
+using nerd_dictation::wake_word::WakeWordResult;
+namespace fs = std::filesystem;
 
-/**
- * Load WAV file (16-bit PCM mono) into vector of int16_t samples
- * Returns sample rate in output parameter
- */
-static std::vector<int16_t> load_wav_file(const std::string& filepath, int& sample_rate) {
-    std::ifstream file(filepath, std::ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open WAV file: " + filepath);
-    }
+namespace {
 
-    /* Read RIFF header */
-    char riff[4];
-    file.read(riff, 4);
-    if (strncmp(riff, "RIFF", 4) != 0) {
-        throw std::runtime_error("Not a valid WAV file (missing RIFF)");
-    }
-
-    uint32_t file_size;
-    file.read(reinterpret_cast<char*>(&file_size), 4);
-
-    char wave[4];
-    file.read(wave, 4);
-    if (strncmp(wave, "WAVE", 4) != 0) {
-        throw std::runtime_error("Not a valid WAV file (missing WAVE)");
-    }
-
-    /* Find fmt chunk */
-    uint16_t audio_format = 0;
-    uint16_t num_channels = 0;
-    uint16_t bits_per_sample = 0;
-    sample_rate = 0;
-
-    while (file.good()) {
-        char chunk_id[4];
-        file.read(chunk_id, 4);
-        if (!file.good()) break;
-
-        uint32_t chunk_size;
-        file.read(reinterpret_cast<char*>(&chunk_size), 4);
-
-        if (strncmp(chunk_id, "fmt ", 4) == 0) {
-            file.read(reinterpret_cast<char*>(&audio_format), 2);
-            file.read(reinterpret_cast<char*>(&num_channels), 2);
-            uint32_t sr;
-            file.read(reinterpret_cast<char*>(&sr), 4);
-            sample_rate = static_cast<int>(sr);
-            uint32_t byte_rate;
-            file.read(reinterpret_cast<char*>(&byte_rate), 4);
-            uint16_t block_align;
-            file.read(reinterpret_cast<char*>(&block_align), 2);
-            file.read(reinterpret_cast<char*>(&bits_per_sample), 2);
-
-            /* Skip any extra fmt bytes */
-            if (chunk_size > 16) {
-                file.seekg(chunk_size - 16, std::ios::cur);
-            }
-        } else if (strncmp(chunk_id, "data", 4) == 0) {
-            /* Read audio data */
-            if (audio_format != 1) {
-                throw std::runtime_error("Only PCM format supported");
-            }
-            if (bits_per_sample != 16) {
-                throw std::runtime_error("Only 16-bit samples supported");
-            }
-            if (num_channels != 1) {
-                throw std::runtime_error("Only mono audio supported");
-            }
-
-            std::vector<int16_t> samples(chunk_size / sizeof(int16_t));
-            file.read(reinterpret_cast<char*>(samples.data()), chunk_size);
-            return samples;
-        } else {
-            /* Skip unknown chunk */
-            file.seekg(chunk_size, std::ios::cur);
-        }
-    }
-
-    throw std::runtime_error("No data chunk found in WAV file");
-}
-
-/**
- * Resample audio from source_rate to target_rate using simple linear interpolation
- */
-static std::vector<int16_t> resample_audio(const std::vector<int16_t>& input,
-                                            int source_rate, int target_rate) {
-    if (source_rate == target_rate) {
-        return input;
-    }
-
-    double ratio = static_cast<double>(target_rate) / source_rate;
-    size_t output_size = static_cast<size_t>(input.size() * ratio);
-    std::vector<int16_t> output(output_size);
-
-    for (size_t i = 0; i < output_size; ++i) {
-        double src_idx = i / ratio;
-        size_t idx0 = static_cast<size_t>(src_idx);
-        size_t idx1 = std::min(idx0 + 1, input.size() - 1);
-        double frac = src_idx - idx0;
-
-        double sample = input[idx0] * (1.0 - frac) + input[idx1] * frac;
-        output[i] = static_cast<int16_t>(std::clamp(sample, -32768.0, 32767.0));
-    }
-
-    return output;
-}
-
-
-class WakeWordTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        /* Create config with wake word enabled - using t-one backend */
-        config_.backend = "t-one";
-        config_.input_method = "stdout";
-        config_.audio.sample_rate = 8000;  /* t-one uses 8000 Hz */
-        config_.audio.chunk_size = 4000;   /* ~250ms chunks at 8kHz */
-        config_.wake_word.enabled = true;
-        config_.wake_word.word = "запись";
-    }
-
-    Config config_;
-
-    std::string find_tone_backend() {
-        /* Check environment variable first */
-        const char* backend_path = std::getenv("NERD_DICTATION_TONE_BACKEND_PATH");
-        if (backend_path && std::filesystem::exists(backend_path)) {
-            return backend_path;
-        }
-
-        const char* build_dir = std::getenv("CMAKE_BINARY_DIR");
-        if (build_dir) {
-            std::filesystem::path path = std::filesystem::path(build_dir) / "libnerd-dictation-t-one.so";
-            if (std::filesystem::exists(path)) {
-                return path.string();
-            }
-        }
-
-        /* Check install directory (where sherpa-onnx dependencies are) */
-        const char* home = std::getenv("HOME");
-        if (home) {
-            std::filesystem::path install_path = std::filesystem::path(home) /
-                "forge/nerd-dictation/install/lib/libnerd-dictation-t-one.so";
-            if (std::filesystem::exists(install_path)) {
-                return install_path.string();
-            }
-        }
-
-        std::vector<std::string> paths = {
-            "libnerd-dictation-t-one.so",
-            "../libnerd-dictation-t-one.so",
-            "./build/libnerd-dictation-t-one.so",
-            "../build/libnerd-dictation-t-one.so",
-            "/usr/lib/libnerd-dictation-t-one.so",
-            "/usr/local/lib/libnerd-dictation-t-one.so"
-        };
-
-        for (const auto& path : paths) {
-            if (std::filesystem::exists(path)) {
-                return path;
-            }
-        }
-
-        return "";
-    }
-
-    std::string find_wake_word_sample() {
-        std::vector<std::string> paths = {
-            "test-samples/wake-word-zapis.wav",
-            "../test-samples/wake-word-zapis.wav",
-            "../../test-samples/wake-word-zapis.wav",
-        };
-
-        /* Check TEST_SAMPLES_DIR env var */
-        const char* samples_dir = std::getenv("TEST_SAMPLES_DIR");
-        if (samples_dir) {
-            std::filesystem::path path = std::filesystem::path(samples_dir) / "wake-word-zapis.wav";
-            if (std::filesystem::exists(path)) {
-                return path.string();
-            }
-        }
-
-        for (const auto& path : paths) {
-            if (std::filesystem::exists(path)) {
-                return path;
-            }
-        }
-
-        return "";
-    }
+struct Wav {
+    std::vector<int16_t> samples;
+    int sample_rate = 0;
 };
 
-TEST_F(WakeWordTest, LoadWavFile) {
-    std::string sample_path = find_wake_word_sample();
-    if (sample_path.empty()) {
-        GTEST_SKIP() << "Wake word sample file not found. Run scripts/record-wake-word.py first.";
-    }
+// Minimal RIFF reader: 16-bit PCM mono only, which is what test-samples hold
+Wav load_wav(const fs::path& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open " + path.string());
 
-    int sample_rate = 0;
-    std::vector<int16_t> samples;
+    char tag[4];
+    uint32_t size = 0;
+    f.read(tag, 4);
+    if (std::strncmp(tag, "RIFF", 4) != 0) throw std::runtime_error("no RIFF: " + path.string());
+    f.read(reinterpret_cast<char*>(&size), 4);
+    f.read(tag, 4);
+    if (std::strncmp(tag, "WAVE", 4) != 0) throw std::runtime_error("no WAVE: " + path.string());
 
-    EXPECT_NO_THROW({
-        samples = load_wav_file(sample_path, sample_rate);
-    });
-
-    EXPECT_GT(samples.size(), 0u);
-    EXPECT_GT(sample_rate, 0);
-
-    std::cout << "Loaded " << samples.size() << " samples at " << sample_rate << " Hz" << std::endl;
-    std::cout << "Duration: " << static_cast<double>(samples.size()) / sample_rate << " seconds" << std::endl;
-}
-
-TEST_F(WakeWordTest, ResampleAudio) {
-    /* Test resampling from 8000 Hz to 16000 Hz */
-    std::vector<int16_t> input = {0, 1000, 2000, 3000, 4000, 5000, 6000, 7000};
-    auto output = resample_audio(input, 8000, 16000);
-
-    /* Output should be roughly double the size */
-    EXPECT_EQ(output.size(), input.size() * 2);
-
-    /* First and last samples should match approximately */
-    EXPECT_EQ(output[0], input[0]);
-}
-
-TEST_F(WakeWordTest, WakeWordDetection_EndToEnd) {
-    /* Skip if prerequisites not met */
-    std::string backend_path = find_tone_backend();
-    if (backend_path.empty()) {
-        GTEST_SKIP() << "t-one backend not found";
-    }
-
-    std::string sample_path = find_wake_word_sample();
-    if (sample_path.empty()) {
-        GTEST_SKIP() << "Wake word sample file not found";
-    }
-
-    config_.backend_library = backend_path;
-
-    /* Load and prepare audio */
-    int file_sample_rate = 0;
-    std::vector<int16_t> samples = load_wav_file(sample_path, file_sample_rate);
-
-    std::cout << "Loaded audio: " << samples.size() << " samples at " << file_sample_rate << " Hz" << std::endl;
-
-    /* Resample if needed - t-one uses 8000 Hz */
-    if (file_sample_rate != config_.audio.sample_rate) {
-        std::cout << "Resampling from " << file_sample_rate << " Hz to "
-                  << config_.audio.sample_rate << " Hz" << std::endl;
-        samples = resample_audio(samples, file_sample_rate, config_.audio.sample_rate);
-        std::cout << "After resampling: " << samples.size() << " samples" << std::endl;
-    }
-
-    /* Create daemon with t-one backend - skip if dependencies not available */
-    std::unique_ptr<DictationDaemon> daemon;
-    try {
-        daemon = std::make_unique<DictationDaemon>(config_);
-    } catch (const std::exception& e) {
-        std::string error = e.what();
-        if (error.find("libsherpa-onnx") != std::string::npos ||
-            error.find("cannot open shared object") != std::string::npos) {
-            GTEST_SKIP() << "t-one backend dependencies not installed: " << error;
+    Wav wav;
+    uint16_t format = 0, channels = 0, bits = 0;
+    while (f.read(tag, 4)) {
+        f.read(reinterpret_cast<char*>(&size), 4);
+        if (std::strncmp(tag, "fmt ", 4) == 0) {
+            uint32_t rate = 0;
+            f.read(reinterpret_cast<char*>(&format), 2);
+            f.read(reinterpret_cast<char*>(&channels), 2);
+            f.read(reinterpret_cast<char*>(&rate), 4);
+            f.seekg(6, std::ios::cur);  // byte rate + block align
+            f.read(reinterpret_cast<char*>(&bits), 2);
+            f.seekg(static_cast<std::streamoff>(size) - 16, std::ios::cur);
+            wav.sample_rate = static_cast<int>(rate);
+        } else if (std::strncmp(tag, "data", 4) == 0) {
+            if (format != 1 || channels != 1 || bits != 16) {
+                throw std::runtime_error("not 16-bit PCM mono: " + path.string());
+            }
+            wav.samples.resize(size / sizeof(int16_t));
+            f.read(reinterpret_cast<char*>(wav.samples.data()), size);
+            return wav;
+        } else {
+            f.seekg(size + (size & 1), std::ios::cur);
         }
-        throw;
     }
-    ASSERT_EQ(daemon->get_state(), DaemonState::Idle);
-    std::cout << "Backend loaded: " << daemon->get_backend_name() << std::endl;
+    throw std::runtime_error("no data chunk: " + path.string());
+}
 
-    /* Start wake word detection */
-    daemon->start_wake_word_detection_for_test();
+constexpr int kDaemonRate = 16000;
 
-    /* Give it time to initialize */
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    if (!daemon->is_wake_word_running()) {
-        GTEST_SKIP() << "Wake word detection failed to start";
+// Bring a recording to the daemon's rate. Only the 8 kHz -> 16 kHz case
+// exists in test-samples; linear interpolation is enough for recognition.
+std::vector<int16_t> to_daemon_rate(const Wav& wav) {
+    if (wav.sample_rate == kDaemonRate) return wav.samples;
+    if (wav.sample_rate * 2 != kDaemonRate) {
+        throw std::runtime_error("unsupported sample rate " + std::to_string(wav.sample_rate));
     }
+    std::vector<int16_t> out(wav.samples.size() * 2);
+    for (size_t i = 0; i < wav.samples.size(); ++i) {
+        const int a = wav.samples[i];
+        const int b = i + 1 < wav.samples.size() ? wav.samples[i + 1] : a;
+        out[2 * i] = static_cast<int16_t>(a);
+        out[2 * i + 1] = static_cast<int16_t>((a + b) / 2);
+    }
+    return out;
+}
 
-    /* Inject audio */
-    daemon->inject_audio_for_test(samples);
+fs::path samples_dir() {
+    if (const char* env = std::getenv("TEST_SAMPLES_DIR")) {
+        if (fs::exists(fs::path(env) / "wake-word-zapis.wav")) return env;
+    }
+    for (const char* p : {"test-samples", "../test-samples", "../../test-samples"}) {
+        if (fs::exists(fs::path(p) / "wake-word-zapis.wav")) return p;
+    }
+    return {};
+}
 
-    /* Wait for wake word detection to process */
-    std::cout << "Waiting for wake word detection..." << std::endl;
+std::string model_path() {
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) + "/.local/share/vosk/vosk-model-small-ru" : "";
+}
 
-    bool detected = false;
-    for (int i = 0; i < 50; ++i) {  /* Max 5 seconds */
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (daemon->get_state() == DaemonState::Listening) {
-            detected = true;
-            std::cout << "Wake word detected after " << (i + 1) * 100 << " ms!" << std::endl;
-            break;
+// Same configuration as DictationDaemon in cli.py
+WakeWordConfig daemon_config(int sample_rate) {
+    WakeWordConfig c;
+    c.model_path = model_path();
+    c.wake_word = "запись";
+    c.variants = {"записи"};
+    c.sample_rate = sample_rate;
+    return c;
+}
+
+class WakeWordManagerTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        if (!nerd_dictation::wake_word::vosk_model_exists(model_path())) {
+            GTEST_SKIP() << "Vosk model not found: " << model_path();
+        }
+        dir_ = samples_dir();
+        if (dir_.empty()) {
+            GTEST_SKIP() << "test-samples/ with wake-word-zapis.wav not found";
         }
     }
 
-    /* This is the main assertion - wake word should trigger dictation */
-    EXPECT_TRUE(detected) << "Wake word was not detected within timeout";
-
-    if (detected) {
-        /* Clean up - end dictation */
-        daemon->end_dictation();
-        EXPECT_EQ(daemon->get_state(), DaemonState::Idle);
+    // Re-init each test: the singleton may have been left in another state
+    // (e.g. by the bad-path test); reset() as the daemon does per segment.
+    static WakeWordManager& manager() {
+        WakeWordManager& m = WakeWordManager::instance();
+        EXPECT_TRUE(m.init(daemon_config(kDaemonRate))) << m.get_error();
+        m.reset();
+        return m;
     }
+
+    static WakeWordResult recognize(const fs::path& file) {
+        return manager().process_speech(to_daemon_rate(load_wav(file)));
+    }
+
+    fs::path dir_;
+};
+
+}  // namespace
+
+TEST_F(WakeWordManagerTest, RecordedWakeWordIsDetected) {
+    const WakeWordResult r = recognize(dir_ / "wake-word-zapis.wav");
+    EXPECT_TRUE(r.detected) << "recognized text: '" << r.text << "'";
 }
 
-/**
- * NOTE: This test and WakeWordDetection_EndToEnd both load t-one backend.
- * Due to GPU/CUDA memory cleanup limitations in onnxruntime, t-one can only
- * be loaded once per process. Run these tests separately:
- *   --gtest_filter="WakeWordTest.WakeWordDetection_EndToEnd"
- *   --gtest_filter="WakeWordTest.WakeWordNotDetected_Silence"
- */
-TEST_F(WakeWordTest, WakeWordNotDetected_Silence) {
-    /* Skip if prerequisites not met */
-    std::string backend_path = find_tone_backend();
-    if (backend_path.empty()) {
-        GTEST_SKIP() << "t-one backend not found";
-    }
-
-    config_.backend_library = backend_path;
-
-    /* Create silence audio (3 seconds) */
-    size_t num_samples = config_.audio.sample_rate * 3;
-    std::vector<int16_t> silence(num_samples, 0);
-
-    /* Create daemon with t-one backend - skip if dependencies not available */
-    std::unique_ptr<DictationDaemon> daemon;
-    try {
-        daemon = std::make_unique<DictationDaemon>(config_);
-    } catch (const std::exception& e) {
-        std::string error = e.what();
-        if (error.find("libsherpa-onnx") != std::string::npos ||
-            error.find("cannot open shared object") != std::string::npos) {
-            GTEST_SKIP() << "t-one backend dependencies not installed: " << error;
+TEST_F(WakeWordManagerTest, PhrasesWithoutWakeWordAreNotDetected) {
+    int checked = 0;
+    for (const auto& e : fs::directory_iterator(dir_)) {
+        const std::string name = e.path().filename();
+        if (e.path().extension() != ".wav" || name.size() < 3 ||
+            !std::isdigit(static_cast<unsigned char>(name[0])) ||
+            !std::isdigit(static_cast<unsigned char>(name[1])) || name[2] != '-') {
+            continue;
         }
-        throw;
+        const WakeWordResult r = recognize(e.path());
+        EXPECT_FALSE(r.detected) << name << ": recognized '" << r.text << "'";
+        ++checked;
     }
-    ASSERT_EQ(daemon->get_state(), DaemonState::Idle);
+    if (checked == 0) GTEST_SKIP() << "no NN-*.wav phrase samples";
+}
 
-    /* Start wake word detection */
-    daemon->start_wake_word_detection_for_test();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+TEST_F(WakeWordManagerTest, VariantAloneTriggersDetection) {
+    // Main word that cannot match, variant that can: detection must come
+    // from the variant list
+    const std::vector<int16_t> audio = to_daemon_rate(load_wav(dir_ / "wake-word-zapis.wav"));
+    WakeWordManager& m = manager();
+    m.set_wake_word("абракадабра", {"запис"});
+    const WakeWordResult r = m.process_speech(audio);
+    m.set_wake_word("запись", {"записи"});
+    EXPECT_TRUE(r.detected) << "recognized text: '" << r.text << "'";
+}
 
-    if (!daemon->is_wake_word_running()) {
-        GTEST_SKIP() << "Wake word detection failed to start";
-    }
+TEST_F(WakeWordManagerTest, ResetSeparatesUtterances) {
+    // The daemon resets after every segment; a reset recognizer must not
+    // carry the previous utterance into the next result
+    const std::vector<int16_t> wake = to_daemon_rate(load_wav(dir_ / "wake-word-zapis.wav"));
+    WakeWordManager& m = manager();
+    ASSERT_TRUE(m.process_speech(wake).detected);
 
-    /* Inject silence */
-    daemon->inject_audio_for_test(silence);
+    m.reset();
+    const std::vector<int16_t> silence(kDaemonRate, 0);  // 1 s
+    const WakeWordResult r = m.process_speech(silence);
+    EXPECT_FALSE(r.detected) << "after reset, silence yielded '" << r.text << "'";
+    EXPECT_TRUE(r.text.empty()) << "after reset, silence yielded '" << r.text << "'";
+}
 
-    /* Wait and verify no detection */
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+TEST_F(WakeWordManagerTest, EmptyAudioIsNotDetected) {
+    WakeWordManager& m = manager();
+    const WakeWordResult r = m.process_speech(std::vector<int16_t>{});
+    EXPECT_FALSE(r.detected);
+    EXPECT_TRUE(r.text.empty());
+}
 
-    /* Silence should NOT trigger wake word */
-    EXPECT_EQ(daemon->get_state(), DaemonState::Idle)
-        << "Wake word should not be detected in silence";
+TEST(WakeWordManagerInit, BadModelPathFailsWithReason) {
+    WakeWordConfig c = daemon_config(kDaemonRate);
+    c.model_path = "/nonexistent/vosk-model";
+    WakeWordManager& m = WakeWordManager::instance();
+    EXPECT_FALSE(m.init(c));
+    EXPECT_FALSE(m.get_error().empty());
+    EXPECT_NE(m.get_error().find("/nonexistent/vosk-model"), std::string::npos) << m.get_error();
 }

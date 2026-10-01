@@ -124,19 +124,15 @@ TEST(RealSysfs, ThisMachineTouchpadVsTrackPoint) {
 
 namespace {
 
+// Each test gets its own Xvfb on a display number the server picks itself
+// (-displayfd), so tests run in parallel under `ctest -j` without colliding.
 class XvfbFixture : public ::testing::Test {
 protected:
-    static constexpr int kDisplay = 97;
-
     void SetUp() override {
         if (::access("/usr/bin/Xvfb", X_OK) != 0 && ::access("/usr/sbin/Xvfb", X_OK) != 0) {
             GTEST_SKIP() << "Xvfb not installed";
         }
-        if (fs::exists(socket_path())) {
-            GTEST_SKIP() << "display :" << kDisplay << " is busy";
-        }
         saved_display_ = std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "";
-        ::setenv("DISPLAY", (":" + std::to_string(kDisplay)).c_str(), 1);
         start();
     }
 
@@ -146,19 +142,44 @@ protected:
         else ::setenv("DISPLAY", saved_display_.c_str(), 1);
     }
 
-    static fs::path socket_path() {
-        return "/tmp/.X11-unix/X" + std::to_string(kDisplay);
+    fs::path socket_path() const {
+        return "/tmp/.X11-unix/X" + std::to_string(display_);
     }
 
+    // First start: Xvfb picks a free display and reports it on a pipe.
+    // Restart (display_ already known): reuse the same number, so clients
+    // that reconnect via $DISPLAY find the server again.
     void start() {
+        int fds[2] = {-1, -1};
+        const bool pick = display_ < 0;
+        if (pick) {
+            ASSERT_EQ(::pipe(fds), 0);
+        }
         pid_ = ::fork();
         if (pid_ == 0) {
-            const std::string disp = ":" + std::to_string(kDisplay);
-            ::execlp("Xvfb", "Xvfb", disp.c_str(), "-nolisten", "tcp", "-noreset",
-                     static_cast<char*>(nullptr));
+            if (pick) {
+                ::close(fds[0]);
+                const std::string fd = std::to_string(fds[1]);
+                ::execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-nolisten", "tcp",
+                         "-noreset", static_cast<char*>(nullptr));
+            } else {
+                const std::string disp = ":" + std::to_string(display_);
+                ::execlp("Xvfb", "Xvfb", disp.c_str(), "-nolisten", "tcp", "-noreset",
+                         static_cast<char*>(nullptr));
+            }
             ::_exit(127);
         }
         ASSERT_GT(pid_, 0);
+        if (pick) {
+            ::close(fds[1]);
+            std::string num;
+            char c;
+            while (::read(fds[0], &c, 1) == 1 && c != '\n') num += c;
+            ::close(fds[0]);
+            ASSERT_FALSE(num.empty()) << "Xvfb did not report a display";
+            display_ = std::stoi(num);
+            ::setenv("DISPLAY", (":" + num).c_str(), 1);
+        }
         for (int i = 0; i < 100 && !fs::exists(socket_path()); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
@@ -186,6 +207,7 @@ protected:
     }
 
     pid_t pid_ = -1;
+    int display_ = -1;
     std::string saved_display_;
 };
 

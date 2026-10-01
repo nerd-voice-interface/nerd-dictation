@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
-#include "nerd_dictation/input/postprocess.hpp"
+#include "nerd_dictation/postprocess/text_postprocessor.hpp"
 #include <vector>
 #include <string>
 
-using namespace nerd_dictation::input;
+using namespace nerd_dictation::postprocess;
 
 class PostProcessTest : public ::testing::Test {
 protected:
@@ -508,4 +508,15 @@ TEST_F(PostProcessTest, PunctuationNoSpaceBeforeWithMultipleSpaces) {
     auto text_action = std::get<TextAction>(actions[0]);
     // Should be "Текст. Продолжение" (no space before period, single space after, capitalized after period)
     EXPECT_EQ(text_action.text, "Текст. Продолжение");
+}
+
+// Em dash keeps Russian typography: a space on both sides. The dead copy put
+// "—" into no_space_before and produced "Текст— продолжение"; the live copy
+// deliberately moved it to space_before (commit ad659a8). Pinned here so a
+// change to either set is a visible decision, not a silent regression.
+TEST_F(PostProcessTest, EmDashKeepsSpacesAround) {
+    auto actions = processor_.process("текст тире продолжение");
+    ASSERT_EQ(actions.size(), 1);
+    ASSERT_TRUE(std::holds_alternative<TextAction>(actions[0]));
+    EXPECT_EQ(std::get<TextAction>(actions[0]).text, "Текст — продолжение");
 }
