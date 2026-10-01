@@ -132,7 +132,7 @@ bind = $mod SHIFT, grave, exec, /path/to/nerd-dictation toggle
 
 #### Option 2: Touchpad/Mouse Button (xbindkeys)
 
-To bind to the middle button of mouse or touchpad:
+To bind to a physical middle button (mouse, or the TrackPoint buttons on a ThinkPad):
 
 ```bash
 # Install xbindkeys
@@ -143,6 +143,31 @@ cat > ~/.xbindkeysrc << 'EOF'
 "/path/to/nerd-dictation toggle"
   b:2
 EOF
+```
+
+**Touchpads cause false starts.** Most touchpads have no physical middle button: libinput
+synthesizes button 2 from a three-finger tap (when `Tapping` is on) or a three-finger click
+(`ClickMethod "clickfinger"`). A palm or thumb brushing the pad while one finger moves is
+enough to trigger it. xbindkeys only sees the core button 2 and cannot tell which device it
+came from, so these synthesized clicks toggle dictation too.
+
+Check whether your touchpad synthesizes the middle button (`middle` in either map means it does):
+
+```bash
+sudo libinput list-devices | grep -E '^Device:|button map'
+```
+
+If so, deactivate button 2 on the touchpad only — the physical middle button on another device
+keeps working. Add to the touchpad `InputClass` section in `/etc/X11/xorg.conf.d/40-libinput.conf`:
+
+```
+Option "ButtonMapping" "1 0 3"
+```
+
+To apply it to the running session without restarting X:
+
+```bash
+xinput set-button-map "<touchpad name from xinput list>" 1 0 3
 ```
 
 **Managing xbindkeys via systemd (recommended):**
