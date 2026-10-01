@@ -37,7 +37,6 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 SOCKET_PATH = RUNTIME_DIR / "nerd-dictation-ex.sock"
 PID_FILE = RUNTIME_DIR / "nerd-dictation-ex.pid"
 LOCK_PATH = RUNTIME_DIR / "nerd-dictation-ex.lock"  # flock для предотвращения дублирования
-COOKIE_PATH = Path("/tmp/nerd-dictation-ex.cookie")
 
 CONFIG_DIRS = [
     Path.home() / ".config" / "nerd-dictation",      # Primary config location
@@ -1064,61 +1063,39 @@ class DaemonClient:
 # Команды для работы через daemon
 # ============================================================================
 
+def _daemon_command(action: str) -> None:
+    """Отправить команду демону. Без демона диктовки нет: модель держит он."""
+    if not DaemonClient.is_running():
+        print("Демон не запущен: systemctl --user start nerd-dictation", file=sys.stderr)
+        sys.exit(1)
+    response = DaemonClient.send_command({"action": action})
+    print(response.get("message", ""), file=sys.stderr)
+    if response.get("status") != "ok":
+        sys.exit(1)
+
+
 def cmd_begin(args, config: dict) -> None:
-    """Начать диктовку (через daemon или напрямую)."""
-    if DaemonClient.is_running():
-        response = DaemonClient.send_command({"action": "begin"})
-        if response.get("status") == "ok":
-            print("Диктовка запущена", file=sys.stderr)
-        else:
-            print(f"Ошибка: {response.get('message')}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print("Daemon не запущен, загрузка модели...", file=sys.stderr)
-        print("Для быстрого отклика: systemctl --user start nerd-dictation-ex", file=sys.stderr)
-        _cmd_begin_direct(args, config)
+    """Начать диктовку."""
+    _daemon_command("begin")
 
 
 def cmd_end(args, config: dict) -> None:
-    """Завершить диктовку."""
-    if DaemonClient.is_running():
-        response = DaemonClient.send_command({"action": "end"})
-        if response.get("status") == "ok":
-            print("Диктовка завершена", file=sys.stderr)
-        else:
-            print(f"Ошибка: {response.get('message')}", file=sys.stderr)
-    else:
-        _cmd_end_direct(args, config)
+    """Завершить диктовку с выводом текста."""
+    _daemon_command("end")
 
 
 def cmd_cancel(args, config: dict) -> None:
-    """Отменить диктовку."""
-    if DaemonClient.is_running():
-        response = DaemonClient.send_command({"action": "cancel"})
-        if response.get("status") == "ok":
-            print("Диктовка отменена", file=sys.stderr)
-        else:
-            print(f"Ошибка: {response.get('message')}", file=sys.stderr)
-    else:
-        _cmd_cancel_direct(args, config)
+    """Отменить диктовку без вывода."""
+    _daemon_command("cancel")
 
 
 def cmd_toggle(args, config: dict) -> None:
-    """Переключить диктовку (begin/end)."""
-    if DaemonClient.is_running():
-        response = DaemonClient.send_command({"action": "toggle"})
-        print(response.get("message", ""), file=sys.stderr)
-        if response.get("status") != "ok":
-            sys.exit(1)
-    else:
-        if COOKIE_PATH.exists():
-            _cmd_end_direct(args, config)
-        else:
-            _cmd_begin_direct(args, config)
+    """Переключить диктовку."""
+    _daemon_command("toggle")
 
 
 # ============================================================================
-# Fallback: прямой режим (без daemon)
+# Запись аудио
 # ============================================================================
 
 def _get_audio_command(config: dict) -> list:
@@ -1150,158 +1127,6 @@ def _get_audio_command(config: dict) -> list:
             cmd.append(f"--device={target}")
 
     return cmd
-
-
-def _audio_stream(config: dict) -> Generator[bytes, None, None]:
-    """Генератор аудио-чанков."""
-    from .noise_reduction import create_noise_reducer
-    
-    cmd = _get_audio_command(config)
-    chunk_size = config.get("audio", {}).get("chunk_size", 8000)
-    noise_reducer = create_noise_reducer(config)
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-
-    try:
-        # Блокирующее чтение — ждём пока накопится chunk_size байт
-        while True:
-            chunk = proc.stdout.read(chunk_size)
-            if not chunk:
-                break  # EOF: процесс записи завершился
-            # Применяем шумоподавление если включено
-            if noise_reducer:
-                chunk = noise_reducer.process_chunk(chunk)
-            yield chunk
-    finally:
-        proc.terminate()
-        proc.wait()
-
-
-def _cmd_begin_direct(args, config: dict) -> None:
-    """Начать диктовку напрямую (без daemon)."""
-    from . import get_backend, get_available_backends
-    from .input import type_text
-    from .sounds import play_begin, play_end
-
-    # ========================================================================
-    # Проверка flock — предотвращает запуск если daemon или другой direct mode
-    # работает (даже во время загрузки модели, до создания socket)
-    # ========================================================================
-    try:
-        lockfile = open(LOCK_PATH, "w")
-        fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        lockfile.write(str(os.getpid()))
-        lockfile.flush()
-    except (IOError, OSError):
-        print(f"FATAL: Другой экземпляр nerd-dictation уже работает.", file=sys.stderr)
-        print(f"(lockfile: {LOCK_PATH})", file=sys.stderr)
-        sys.exit(1)
-
-    # Проверка: если daemon запущен — не запускать direct mode
-    if DaemonClient.is_running():
-        print("Daemon уже запущен! Используйте daemon для диктовки.", file=sys.stderr)
-        print("Команда: nerd-dictation begin", file=sys.stderr)
-        lockfile.close()  # Освобождаем lock
-        sys.exit(1)
-
-    if COOKIE_PATH.exists():
-        print("Диктовка уже запущена. Используйте 'end' или 'cancel'.", file=sys.stderr)
-        lockfile.close()  # Освобождаем lock
-        sys.exit(1)
-
-    backend_name = getattr(args, 'backend', None) or config.get("general", {}).get("backend", "vosk")
-
-    available = get_available_backends()
-    if not available:
-        print("Ошибка: нет установленных бэкендов.", file=sys.stderr)
-        print("\nУстановите бэкенд:", file=sys.stderr)
-        print("  pip install nerd-dictation-vosk    # Vosk (CPU)", file=sys.stderr)
-        print("  pip install nerd-dictation-gigaam  # GigaAM (GPU)", file=sys.stderr)
-        sys.exit(1)
-
-    if backend_name not in available:
-        print(f"Ошибка: бэкенд '{backend_name}' не установлен.", file=sys.stderr)
-        print(f"Доступные: {', '.join(available.keys())}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Загрузка бэкенда: {backend_name}...", file=sys.stderr)
-    backend = get_backend(backend_name)
-
-    backend_config = config.get(backend_name, {})
-    sample_rate = config.get("audio", {}).get("sample_rate", 16000)
-
-    if backend_name == "vosk":
-        model_path = os.path.expanduser(backend_config.get("model_path", ""))
-        backend.load_model(model_path, sample_rate=sample_rate)
-    elif backend_name == "gigaam":
-        backend.load_model(
-            model_name=backend_config.get("model_name", "v3_ctc"),
-            device=backend_config.get("device", "cuda"),
-        )
-    else:
-        backend.load_model(**backend_config)
-
-    COOKIE_PATH.write_text(str(os.getpid()))
-
-    running = True
-
-    def handle_signal(signum, frame):
-        nonlocal running
-        running = False
-
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
-
-    print("Диктовка запущена. Говорите...", file=sys.stderr)
-    play_begin()
-
-    try:
-        with backend:
-            for result in backend.transcribe_stream(
-                _audio_stream(config),
-                sample_rate=sample_rate,
-            ):
-                if not running:
-                    break
-                if result.is_final and result.text:
-                    type_text(result.text, config)
-
-            if running:
-                final = backend.finalize()
-                if final and final.text:
-                    type_text(final.text, config)
-    finally:
-        play_end()
-        COOKIE_PATH.unlink(missing_ok=True)
-        print("\nДиктовка завершена.", file=sys.stderr)
-
-
-def _cmd_end_direct(args, config: dict) -> None:
-    """Завершить диктовку (прямой режим)."""
-    if not COOKIE_PATH.exists():
-        print("Диктовка не запущена.", file=sys.stderr)
-        sys.exit(1)
-
-    pid = int(COOKIE_PATH.read_text())
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        COOKIE_PATH.unlink(missing_ok=True)
-        print("Процесс диктовки не найден.", file=sys.stderr)
-
-
-def _cmd_cancel_direct(args, config: dict) -> None:
-    """Отменить диктовку (прямой режим)."""
-    if not COOKIE_PATH.exists():
-        print("Диктовка не запущена.", file=sys.stderr)
-        sys.exit(1)
-
-    pid = int(COOKIE_PATH.read_text())
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    COOKIE_PATH.unlink(missing_ok=True)
 
 
 # ============================================================================
@@ -1365,10 +1190,7 @@ def main():
     subparsers.add_parser("daemon", help="Запустить daemon (для systemd)")
 
     # begin
-    begin_parser = subparsers.add_parser("begin", help="Начать диктовку")
-    begin_parser.add_argument("--backend", "-b", help="Бэкенд (переопределяет конфиг)")
-    begin_parser.add_argument("--no-daemon", action="store_true",
-                              help="Не использовать daemon (медленно)")
+    subparsers.add_parser("begin", help="Начать диктовку")
 
     # end
     subparsers.add_parser("end", help="Завершить диктовку")
@@ -1394,10 +1216,7 @@ def main():
     if args.command == "daemon":
         _run_daemon(config)
     elif args.command == "begin":
-        if getattr(args, "no_daemon", False):
-            _cmd_begin_direct(args, config)
-        else:
-            cmd_begin(args, config)
+        cmd_begin(args, config)
     elif args.command == "end":
         cmd_end(args, config)
     elif args.command == "cancel":
@@ -1416,7 +1235,7 @@ def cmd_test_audio():
     """Тест шумоподавления аудио."""
     import struct
     import math
-    from nerd_dictation_ex.noise_reduction import NoiseReducer, AudioPreprocessorConfig
+    from nerd_dictation_ex.noise_reduction import NoiseReducer
 
     print("=" * 50)
     print("Testing audio preprocessing (WebRTC noise suppression)")

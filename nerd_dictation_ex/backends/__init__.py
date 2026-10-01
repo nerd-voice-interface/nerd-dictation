@@ -1,140 +1,48 @@
 """
 nerd-dictation-ex backends
 
-Модульная система бэкендов для распознавания речи.
-Бэкенды загружаются динамически через entry points.
-
-Установка бэкендов:
-    pip install nerd-dictation-vosk    # Vosk (CPU)
-    pip install nerd-dictation-gigaam  # GigaAM (GPU)
-
-Нативные бэкенды (C++):
-    gigaam-native  - GigaAM через нативную реализацию
-    t-one-native   - T-One через нативную реализацию
-    dummy-native   - Тестовый бэкенд
+Бэкенды распознавания — нативные C++ библиотеки (/usr/lib/libnerd-dictation-*.so),
+загружаемые через встроенный модуль _nerd_dictation_native:
+    gigaam-native  - GigaAM (оффлайн, распознаёт сегмент целиком)
+    t-one-native   - T-One (потоковый)
+    dummy-native   - тестовый бэкенд
 """
 
-from importlib.metadata import entry_points
 from typing import Dict, Type
 
 from .base import ASRBackend, ASRResult
+from .native import GigaAMNativeBackend, TOneNativeBackend, DummyNativeBackend
 
-
-def _discover_native_backends() -> Dict[str, Type[ASRBackend]]:
-    """Обнаружить нативные C++ бэкенды."""
-    backends = {}
-
-    try:
-        from .native import GigaAMNativeBackend, TOneNativeBackend, DummyNativeBackend
-
-        backends["gigaam-native"] = GigaAMNativeBackend
-        backends["t-one-native"] = TOneNativeBackend
-        backends["dummy-native"] = DummyNativeBackend
-    except ImportError:
-        # Нативный модуль недоступен
-        pass
-    except Exception as e:
-        import sys
-        print(f"Предупреждение: нативные бэкенды недоступны: {e}", file=sys.stderr)
-
-    return backends
-
-
-def _discover_backends() -> Dict[str, Type[ASRBackend]]:
-    """
-    Обнаружить установленные бэкенды через entry points и нативные.
-
-    Бэкенды регистрируются в pyproject.toml:
-        [project.entry-points."nerd_dictation_ex.backends"]
-        vosk = "nerd_dictation_vosk:VoskBackend"
-    """
-    backends = {}
-
-    # Сначала нативные бэкенды (C++)
-    backends.update(_discover_native_backends())
-
-    # Затем бэкенды из entry points (могут перезаписать нативные)
-    # Python 3.10+ API
-    try:
-        eps = entry_points(group="nerd_dictation_ex.backends")
-    except TypeError:
-        # Python 3.9 fallback
-        eps = entry_points().get("nerd_dictation_ex.backends", [])
-
-    for ep in eps:
-        try:
-            backend_class = ep.load()
-            backends[ep.name] = backend_class
-        except Exception as e:
-            # Логируем, но не падаем — бэкенд может быть не установлен полностью
-            import sys
-            print(f"Предупреждение: не удалось загрузить бэкенд '{ep.name}': {e}", file=sys.stderr)
-
-    return backends
-
-
-# Ленивая загрузка бэкендов
-_backends_cache: Dict[str, Type[ASRBackend]] = None
+_BACKENDS: Dict[str, Type[ASRBackend]] = {
+    "gigaam-native": GigaAMNativeBackend,
+    "t-one-native": TOneNativeBackend,
+    "dummy-native": DummyNativeBackend,
+}
 
 
 def get_available_backends() -> Dict[str, Type[ASRBackend]]:
     """Получить словарь доступных бэкендов."""
-    global _backends_cache
-    if _backends_cache is None:
-        _backends_cache = _discover_backends()
-    return _backends_cache
+    return dict(_BACKENDS)
 
 
 def get_backend(name: str, **kwargs) -> ASRBackend:
-    """
-    Получить экземпляр бэкенда по имени.
-
-    Args:
-        name: Имя бэкенда (vosk, gigaam)
-        **kwargs: Параметры для инициализации бэкенда
-
-    Returns:
-        Экземпляр ASRBackend
-
-    Raises:
-        ValueError: Если бэкенд не найден
-    """
-    backends = get_available_backends()
-
-    if name not in backends:
-        if not backends:
-            raise ValueError(
-                f"Бэкенд '{name}' не найден. Нет установленных бэкендов.\n"
-                "Установите бэкенд:\n"
-                "  pip install nerd-dictation-vosk    # для Vosk (CPU)\n"
-                "  pip install nerd-dictation-gigaam  # для GigaAM (GPU)"
-            )
-        available = ", ".join(backends.keys())
-        raise ValueError(f"Бэкенд '{name}' не найден. Доступны: {available}")
-
-    return backends[name](**kwargs)
+    """Получить экземпляр бэкенда по имени."""
+    if name not in _BACKENDS:
+        raise ValueError(f"Бэкенд '{name}' не найден. Доступны: {', '.join(_BACKENDS)}")
+    return _BACKENDS[name](**kwargs)
 
 
 def list_backends() -> None:
-    """Вывести список доступных бэкендов."""
-    backends = get_available_backends()
+    """Вывести список бэкендов.
 
-    if not backends:
-        print("Нет установленных бэкендов.")
-        print("\nУстановите бэкенд:")
-        print("  pip install nerd-dictation-vosk    # Vosk (CPU)")
-        print("  pip install nerd-dictation-gigaam  # GigaAM (GPU)")
-        return
-
+    Потоковость не выводится: она известна только после загрузки модели
+    (nerd_dictation_get_info требует созданного экземпляра).
+    """
     print("Доступные бэкенды:\n")
-    for name, cls in backends.items():
-        streaming = "✓" if cls.supports_streaming else "✗"
+    for name, cls in _BACKENDS.items():
         print(f"  {name}:")
-        print(f"    Потоковый: {streaming}")
-        if hasattr(cls, "__doc__") and cls.__doc__:
-            # Первая строка документации
-            desc = cls.__doc__.strip().split("\n")[0]
-            print(f"    {desc}")
+        if cls.__doc__:
+            print(f"    {cls.__doc__.strip().splitlines()[0]}")
         print()
 
 

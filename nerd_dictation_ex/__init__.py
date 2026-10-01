@@ -1,16 +1,9 @@
 """
-nerd-dictation-ex — расширенная диктовка для Linux.
+nerd-dictation-ex — диктовка для Linux.
 
-Модульная система с подключаемыми бэкендами ASR:
-- nerd-dictation-vosk: Vosk (CPU, потоковый)
-- nerd-dictation-gigaam: GigaAM (GPU, высокое качество)
-
-Использование:
-    pip install nerd-dictation-ex
-    pip install nerd-dictation-vosk  # или nerd-dictation-gigaam
-
-    nerd-dictation-ex begin
-    nerd-dictation-ex end
+Python-демон поверх нативных модулей (_nerd_dictation_native), встроенных
+в бинарь nerd-dictation. Запуск: systemd user-сервис nerd-dictation
+(`nerd-dictation daemon`), управление: nerd-dictation begin|end|cancel|toggle.
 """
 
 __version__ = "0.1.0"

@@ -1,6 +1,7 @@
 # Build directories
 build/
 build-tests/
+*.egg-info/
 install/
 test-samples/
 _build/
