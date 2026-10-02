@@ -495,31 +495,26 @@ class DictationDaemon:
                 time.sleep(0.5)  # Пауза перед перезапуском
 
     def _audio_stream(self) -> Generator[bytes, None, None]:
-        """Генератор аудио-чанков: сначала буфер, потом живой поток."""
-        # Сначала отдаём накопленный буфер
-        with self._audio_buffer_lock:
-            buffered = list(self._audio_buffer)
-            self._audio_buffer.clear()
+        """Генератор аудио-чанков из кольцевого буфера, пока идёт диктовка.
 
-        for chunk in buffered:
-            if self._stop_dictation.is_set():
-                return
-            # Применяем шумоподавление если включено
+        После остановки буфер дочитывается до конца: в нём последние доли
+        секунды речи перед нажатием end, и бросать их нельзя.
+        Чанк снимается под блокировкой, а отдаётся уже без неё: генератор
+        замирает на yield, и держать там блокировку значило бы останавливать
+        слушателя аудио на всё время обработки чанка потребителем.
+        """
+        while True:
+            stopping = self._stop_dictation.is_set()
+            with self._audio_buffer_lock:
+                chunk = self._audio_buffer.popleft() if self._audio_buffer else None
+            if chunk is None:
+                if stopping:
+                    return
+                time.sleep(0.01)
+                continue
             if self._noise_reducer:
                 chunk = self._noise_reducer.process_chunk(chunk)
             yield chunk
-
-        # Затем читаем живой поток
-        while not self._stop_dictation.is_set():
-            with self._audio_buffer_lock:
-                if self._audio_buffer:
-                    chunk = self._audio_buffer.popleft()
-                    # Применяем шумоподавление если включено
-                    if self._noise_reducer:
-                        chunk = self._noise_reducer.process_chunk(chunk)
-                    yield chunk
-                    continue
-            time.sleep(0.01)
 
     def _type_text(self, text: str) -> None:
         """Ввести текст через выбранный метод."""
@@ -759,30 +754,50 @@ class DictationDaemon:
             # Отдельный метод, а не тело цикла: его локальная ссылка на бэкенд
             # умирает на возврате. Иначе цикл держал бы её, ожидая очередь, и
             # после reload старая модель жила бы в видеопамяти.
-            if segment is None:
-                self._finish_session(session_id)
-            else:
-                self._recognize(segment, sample_rate)
+            # Любое исключение ловится здесь: умерший воркер не обработает
+            # следующий маркер конца, и демон навсегда застрянет в FINALIZING.
+            try:
+                if segment is None:
+                    self._finish_session(session_id)
+                else:
+                    self._recognize(segment, sample_rate, session_id)
+            except Exception as e:
+                print(f"[recognizer] ошибка: {type(e).__name__}: {e}", file=sys.stderr)
+                if segment is None:
+                    self._end_session_state()
 
     def _finish_session(self, session_id: int) -> None:
         """Маркер конца сессии: дожать остаток, сбросить состояние, вернуть IDLE."""
         backend = self.backend
-        # Потоковый бэкенд держит недоговорённую фразу — дожимаем её,
-        # если сессию не отменили
-        if backend.supports_streaming and session_id != self._discarded_session:
-            try:
-                self._print_recognized(backend.finalize().text)
-            except Exception as e:
-                print(f"[recognizer] ошибка finalize: {e}", file=sys.stderr)
-        backend.reset()
+        try:
+            # Потоковый бэкенд держит недоговорённую фразу — дожимаем её,
+            # если сессию не отменили
+            if backend.supports_streaming and session_id != self._discarded_session:
+                self._print_recognized(backend.finalize().text, session_id)
+            backend.reset()
+        finally:
+            # Ссылка на бэкенд должна умереть ДО IDLE: в IDLE разрешён reload,
+            # и новая модель не должна грузиться, пока жива старая (GPU 2 ГБ)
+            del backend
+            self._end_session_state()
+
+    def _end_session_state(self) -> None:
+        """Сбросить состояние сессии и вернуть IDLE. Выполняется при любом исходе."""
         # История фильтра ресемплера не должна перетекать в следующую сессию
         if self._resampler is not None:
             self._resampler.reset()
         with self._pending_lock:
             self._pending_seconds = 0.0
-        self.state = DaemonState.IDLE
+        # Под той же блокировкой, что begin/end/cancel/reload: иначе end,
+        # проверивший LISTENING до этого места, перезапишет IDLE на FINALIZING
+        # уже после конца сессии, и маркера, который вернул бы IDLE, не будет.
+        # Флаг снимается и здесь: сессия могла закончиться сама (отказ VAD),
+        # без end/cancel, и wake word тогда остался бы заглушён.
+        with self._lifecycle_lock:
+            self._dictation_active = False
+            self.state = DaemonState.IDLE
 
-    def _recognize(self, segment: bytes, sample_rate: int) -> None:
+    def _recognize(self, segment: bytes, sample_rate: int, session_id: int) -> None:
         """Подать сегмент (буферный режим) или чанк (потоковый) в бэкенд."""
         backend = self.backend
         streaming = backend.supports_streaming
@@ -826,10 +841,16 @@ class DictationDaemon:
                 file=sys.stderr,
             )
 
-        self._print_recognized(text)
+        self._print_recognized(text, session_id)
 
-    def _print_recognized(self, text: str) -> None:
-        """Напечатать распознанный текст, если он не пустой."""
+    def _print_recognized(self, text: str, session_id: int) -> None:
+        """Напечатать распознанный текст, если он не пустой.
+
+        Отмена проверяется здесь, а не только при выемке из очереди: cancel
+        может прийти, пока сегмент уже распознаётся (GigaAM — секунды).
+        """
+        if session_id == self._discarded_session:
+            return
         text = text.strip() if text else ""
         if text:
             print(f"[daemon] распознано: '{text}'", file=sys.stderr)
@@ -953,17 +974,21 @@ class DictationDaemon:
 
     def _reload_backend(self, backend_name: str = None) -> dict:
         """Перезагрузить бэкенд."""
-        # В FINALIZING бэкендом владеет воркер — обнулять его нельзя
-        if self.state != DaemonState.IDLE:
-            return {"status": "error", "message": "Дождитесь окончания диктовки перед перезагрузкой"}
+        # Под блокировкой жизненного цикла: begin зовут и поток кнопки, и
+        # wake word. Без неё begin мог проскочить между проверкой IDLE и
+        # выгрузкой, и сессия пошла бы на бэкенде, которого уже нет.
+        with self._lifecycle_lock:
+            # В FINALIZING бэкендом владеет воркер — обнулять его нельзя
+            if self.state != DaemonState.IDLE:
+                return {"status": "error", "message": "Дождитесь окончания диктовки перед перезагрузкой"}
 
-        try:
-            self.backend = None
-            self.backend_name = None
-            self.load_backend(backend_name)
-            return {"status": "ok", "message": f"Бэкенд {self.backend_name} перезагружен"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+            try:
+                self.backend = None
+                self.backend_name = None
+                self.load_backend(backend_name)
+                return {"status": "ok", "message": f"Бэкенд {self.backend_name} перезагружен"}
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
 
     def _shutdown(self) -> dict:
         """Остановить daemon."""

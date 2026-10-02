@@ -26,6 +26,9 @@ _dictation_loop_buffered. Заглушками подменены только �
       на end, промежуточные гипотезы не печатаются никогда
   R12 потоковый cancel: ничего не печатается, finalize не зовут, reset — да
   R13 бэкенд на частоте записи ресемплер не создаёт
+  R14 исключение при печати не убивает воркер: сессия завершается, демон
+      возвращается в IDLE и принимает следующую диктовку
+  R15 после остановки кольцевой буфер дочитывается до конца
 
 Запуск:  python3 tests/test_dictation_pipeline.py
 """
@@ -420,11 +423,13 @@ def run_vad_failure():
     finally:
         vad_mod.init, vad_mod.is_initialized = saved_init, saved_ready
 
+    # Сессия кончилась сама — wake word не должен остаться заглушённым
+    released = not d._dictation_active
     # Демон обязан снова принимать диктовку
     accepts = d.begin_dictation().get("status") == "ok"
     d._stop_dictation.set()
     d._running = False
-    return {"recovered": recovered, "accepts_next": accepts}
+    return {"recovered": recovered, "accepts_next": accepts, "released": released}
 
 
 def run_toggle():
@@ -527,6 +532,49 @@ def run_streaming(cancel_midway=False):
     }
 
 
+def run_print_failure():
+    """R14 — исключение в _type_text не убивает воркер."""
+    del TYPED[:]
+    d = make_daemon()
+    d._start_audio_listener()
+    d._start_recognizer()
+
+    real = d._type_text
+    calls = {"n": 0}
+
+    def boom(text):
+        calls["n"] += 1
+        raise RuntimeError("xdotool упал")
+
+    d._type_text = boom
+    d.begin_dictation()
+    time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP / 2)
+    d.end_dictation()
+    recovered = wait_idle(d, timeout=30.0)
+    worker_alive = d._recognizer_thread.is_alive()
+
+    d._type_text = real
+    second = d.begin_dictation().get("status") == "ok"
+    time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP / 2)
+    d.end_dictation()
+    second_ok = wait_idle(d, timeout=30.0)
+    d._running = False
+    return {"raised": calls["n"], "recovered": recovered, "alive": worker_alive,
+            "second": second and second_ok, "typed_second": len(TYPED)}
+
+
+def run_drain_on_stop():
+    """R15 — генератор дочитывает буфер после остановки."""
+    d = make_daemon()
+    chunks = [i.to_bytes(2, "little") * (CHUNK // 2) for i in range(5)]
+    with d._audio_buffer_lock:
+        d._audio_buffer.extend(chunks)
+    d._stop_dictation.set()
+    got = list(d._audio_stream())
+    d._running = False
+    return got == chunks
+
+
 def main():
     ok = True
     r = run_main()
@@ -585,9 +633,9 @@ def main():
     if c["backlog_at_cancel"] == 0:
         print(f"R4 FAIL: нечего было отменять, очередь пуста — тест не показателен")
         ok = False
-    elif c["leaked"] > 1:
+    elif c["leaked"] > 0:
         print(f"R4 FAIL: после отмены допечаталось {c['leaked']} сегментов "
-              f"старой сессии (допустим максимум 1, уже бывший в работе)")
+              f"старой сессии (в том числе распознаваемый в момент отмены — нельзя)")
         ok = False
     elif not (c["cancelled_ok"] and c["second_ok"] and c["second_session_typed"] > 0):
         print(f"R4 FAIL: {c}")
@@ -597,7 +645,7 @@ def main():
               f"следующая сессия напечатала {c['second_session_typed']}")
 
     v = run_vad_failure()
-    if v["recovered"] and v["accepts_next"]:
+    if v["recovered"] and v["accepts_next"] and v.get("released", True):
         print("R7 PASS: отказ VAD не заклинил демон, следующая диктовка принята")
     else:
         print(f"R7 FAIL: демон завис после отказа VAD: {v}")
@@ -651,7 +699,7 @@ def main():
         c = run_streaming(cancel_midway=True)
         leaked = len(c["typed"]) - c["typed_before"]
         if (c["fed_before"] > 0 and c["finalize_calls"] == 0 and c["reset_calls"] >= 1
-                and leaked <= 1 and c["drained"] and c["state"] == cli.DaemonState.IDLE
+                and leaked == 0 and c["drained"] and c["state"] == cli.DaemonState.IDLE
                 and c["resampler_resets"] >= 1):
             print(f"R12 PASS: отмена после {c['fed_before']} чанков: finalize не звали, "
                   f"reset и сброс ресемплера были, демон в IDLE")
@@ -667,6 +715,23 @@ def main():
             ok = False
     else:
         print("R10-R13 SKIP: в этой версии нет потокового режима в воркере")
+
+    if hasattr(cli.DictationDaemon, "_end_session_state"):
+        e = run_print_failure()
+        if e["raised"] > 0 and e["recovered"] and e["alive"] and e["second"] and e["typed_second"] > 0:
+            print(f"R14 PASS: {e['raised']} исключений при печати, воркер жив, демон в IDLE, "
+                  f"следующая сессия напечатала {e['typed_second']}")
+        else:
+            print(f"R14 FAIL: {e}")
+            ok = False
+
+        if run_drain_on_stop():
+            print("R15 PASS: после остановки отданы все чанки из буфера")
+        else:
+            print("R15 FAIL: чанки, лежавшие в буфере на момент остановки, потеряны")
+            ok = False
+    else:
+        print("R14-R15 SKIP: в этой версии нет")
 
     print("ALL PASS" if ok else "FAILED")
     return 0 if ok else 1
