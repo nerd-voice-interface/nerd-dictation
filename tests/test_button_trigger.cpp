@@ -397,6 +397,32 @@ TEST_F(XvfbFixture, ForeignCoreGrabAfterConnectIsDetected) {
     EXPECT_NE(err.find("already grabbed"), std::string::npos) << err;
 }
 
+// The periodic re-probe briefly takes a core grab and releases it. The
+// release must actually reach the server: an unflushed ungrab leaves the
+// daemon holding a core grab, and presses then arrive as core events that
+// wait() ignores — the button silently stops working ~5 s after connect.
+TEST_F(XvfbFixture, PressStillCaughtAfterReprobes) {
+    ButtonTrigger t(2, "/sys/class/input", 100 /* reprobe_ms */);
+    ASSERT_TRUE(t.connect()) << t.get_error();
+
+    // Let several re-probes run
+    EXPECT_EQ(next(t, 700), TriggerEvent::None);
+
+    // No core grab may be left behind: another client can take one
+    xcb_connection_t* c = xcb_connect(nullptr, nullptr);
+    ASSERT_FALSE(xcb_connection_has_error(c));
+    const xcb_window_t root = xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
+    xcb_generic_error_t* err = xcb_request_check(c, xcb_grab_button_checked(
+        c, 0, root, XCB_EVENT_MASK_BUTTON_PRESS, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
+        XCB_NONE, XCB_NONE, 2, XCB_MOD_MASK_ANY));
+    EXPECT_EQ(err, nullptr) << "trigger left a core grab on the button";
+    free(err);
+    xcb_disconnect(c);
+
+    ASSERT_EQ(std::system("xdotool click 2"), 0);
+    EXPECT_EQ(next(t, 3000), TriggerEvent::Rejected) << "press lost after re-probes";
+}
+
 TEST_F(XvfbFixture, SurvivesServerRestart) {
     ButtonTrigger t(2);
     ASSERT_TRUE(t.connect()) << t.get_error();

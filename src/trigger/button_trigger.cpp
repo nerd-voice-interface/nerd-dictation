@@ -238,8 +238,14 @@ bool ButtonTrigger::foreign_core_grab() {
         free(err);
         return true;
     }
-    // UngrabButton only ever releases this client's own grabs
-    xcb_ungrab_button(conn_, button_, root_, XCB_MOD_MASK_ANY);
+    // UngrabButton only ever releases this client's own grabs. It must be
+    // checked, not fire-and-forget: wait() goes on to xcb_poll_for_event and
+    // poll(), which never flush the output buffer, so an unchecked ungrab
+    // would sit unsent until the next probe re-grabs. The client would then
+    // hold a core grab nearly all the time, and presses would arrive as core
+    // events that wait() does not handle — the button silently dead.
+    free(xcb_request_check(conn_, xcb_ungrab_button_checked(conn_, button_, root_,
+                                                            XCB_MOD_MASK_ANY)));
     return false;
 }
 
