@@ -8,12 +8,11 @@ Python-демон поверх нативных модулей (_nerd_dictation_
 
 __version__ = "0.1.0"
 
-from .backends import ASRBackend, ASRResult, get_backend, get_available_backends, list_backends
+from .backends import NativeBackend, get_backend, get_available_backends, list_backends
 
 __all__ = [
     "__version__",
-    "ASRBackend",
-    "ASRResult",
+    "NativeBackend",
     "get_backend",
     "get_available_backends",
     "list_backends",

@@ -20,6 +20,12 @@ _dictation_loop_buffered. Заглушками подменены только �
   R8  toggle в демоне: IDLE -> LISTENING -> FINALIZING, в FINALIZING отказ
   R9  поток кнопки: PRESSED переключает, REJECTED нет, после обрыва X
       и неудачного подключения — переподключение
+  R10 потоковый бэкенд на 8 кГц: все чанки дошли до feed по порядку, без
+      потерь, уже ресемплированными
+  R11 потоковый: завершённые фразы печатаются по ходу, остаток — из finalize
+      на end, промежуточные гипотезы не печатаются никогда
+  R12 потоковый cancel: ничего не печатается, finalize не зовут, reset — да
+  R13 бэкенд на частоте записи ресемплер не создаёт
 
 Запуск:  python3 tests/test_dictation_pipeline.py
 """
@@ -144,8 +150,11 @@ _native_trigger = types.ModuleType("_nerd_dictation_native.trigger")
 _native_trigger.ButtonTrigger = _FakeButtonTrigger
 _native_trigger.TriggerEvent = _TriggerEvent
 _native_pkg.trigger = _native_trigger
+_native_audio = types.ModuleType("_nerd_dictation_native.audio")  # Resampler — ниже
+_native_pkg.audio = _native_audio
 sys.modules.setdefault("_nerd_dictation_native", _native_pkg)
 sys.modules.setdefault("_nerd_dictation_native.trigger", _native_trigger)
+sys.modules.setdefault("_nerd_dictation_native.audio", _native_audio)
 
 from nerd_dictation_ex import cli  # noqa: E402
 
@@ -207,13 +216,89 @@ class FakeNative:
 
 
 class FakeBackend:
+    """Оффлайновый бэкенд (как GigaAM): частота записи, распознаёт сегмент целиком."""
     supports_streaming = False
+    sample_rate = SR
 
     def __init__(self):
         self._backend = FakeNative()
 
+    def feed(self, data):
+        self._backend.feed(data)
+
+    def finalize(self):
+        return self._backend.finalize()
+
+    def result(self):
+        raise AssertionError("оффлайновому бэкенду result() не зовут")
+
     def reset(self):
         self._backend.reset()
+
+
+class FakeStreamingBackend:
+    """Потоковый бэкенд (как t-one): 8 кГц, фраза завершается каждые 4 чанка.
+
+    Промежуточная гипотеза помечена "partial" — она не должна печататься.
+    """
+    supports_streaming = True
+    sample_rate = SR // 2
+    FINAL_EVERY = 4
+
+    def __init__(self):
+        self.fed = []          # номера чанков в порядке feed
+        self.fed_sizes = []    # длины поданных байт (уже после ресемплинга)
+        self.pending = []
+        self.finalize_calls = 0
+        self.reset_calls = 0
+
+    def feed(self, data):
+        # Чанк однороден: номер — первые два байта, остальное — проверка целостности
+        assert data == data[:2] * (len(data) // 2), "чанк повреждён"
+        self.fed.append(int.from_bytes(data[:2], "little"))
+        self.fed_sizes.append(len(data))
+        self.pending.append(self.fed[-1])
+
+    def result(self):
+        if len(self.pending) >= self.FINAL_EVERY:
+            text, self.pending = " ".join(map(str, self.pending)), []
+            return types.SimpleNamespace(text=text, is_final=True, confidence=1.0)
+        return types.SimpleNamespace(text="partial", is_final=False, confidence=1.0)
+
+    def finalize(self):
+        self.finalize_calls += 1
+        text, self.pending = " ".join(map(str, self.pending)), []
+        return types.SimpleNamespace(text=text, is_final=True, confidence=1.0)
+
+    def reset(self):
+        self.reset_calls += 1
+        self.pending = []
+
+
+class _FakeResampler:
+    """Заглушка нативного ресемплера: децимация ×2. Качество проверяет gtest
+    (tests/test_resampler.cpp), здесь — только что демон его вызывает."""
+    created = []
+
+    def __init__(self, in_rate, out_rate):
+        assert (in_rate, out_rate) == (SR, SR // 2), (in_rate, out_rate)
+        self._out = out_rate
+        self.calls = 0
+        self.resets = 0
+        _FakeResampler.created.append(self)
+
+    def process(self, data):
+        self.calls += 1
+        return memoryview(data).cast("h")[::2].tobytes()
+
+    def reset(self):
+        self.resets += 1
+
+    def out_rate(self):
+        return self._out
+
+
+_native_audio.Resampler = _FakeResampler
 
 
 def make_daemon():
@@ -240,6 +325,7 @@ def wait_idle(d, timeout):
 def run_main():
     """R1, R2, R3, R5, R6 — один прогон полного конвейера."""
     del TYPED[:]
+    _FakeResampler.created.clear()
     d = make_daemon()
     d._start_audio_listener()
     # Старая версия воркера не имеет — тест должен уметь мерить и её,
@@ -268,6 +354,7 @@ def run_main():
         "states": states,
         "drained": drained,
         "dropped": getattr(d, "_dropped_chunks", None),
+        "resamplers": len(_FakeResampler.created),
         "typed": list(TYPED),
     }
 
@@ -406,6 +493,40 @@ def run_trigger_loop():
     }
 
 
+def run_streaming(cancel_midway=False):
+    """R10-R12 — потоковый бэкенд через тот же конвейер."""
+    del TYPED[:]
+    _FakeResampler.created.clear()
+    d = make_daemon()
+    d.backend = FakeStreamingBackend()
+    d._start_audio_listener()
+    d._start_recognizer()
+
+    d.begin_dictation()
+    if cancel_midway:
+        time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP / 2)
+        typed_before = len(TYPED)
+        fed_before = len(d.backend.fed)
+        d.cancel_dictation()
+    else:
+        time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP + 0.5)
+        typed_before = fed_before = None
+        d.end_dictation()
+    drained = wait_idle(d, timeout=30.0)
+    time.sleep(0.3)
+    d._running = False
+
+    b = d.backend
+    return {
+        "fed": list(b.fed), "fed_sizes": set(b.fed_sizes), "typed": list(TYPED),
+        "finalize_calls": b.finalize_calls, "reset_calls": b.reset_calls,
+        "resamplers": len(_FakeResampler.created),
+        "resampler_resets": sum(r.resets for r in _FakeResampler.created),
+        "drained": drained, "typed_before": typed_before, "fed_before": fed_before,
+        "state": d.state,
+    }
+
+
 def main():
     ok = True
     r = run_main()
@@ -502,6 +623,50 @@ def main():
             ok = False
     else:
         print("R8/R9 SKIP: в этой версии нет toggle в демоне")
+
+    if hasattr(cli.DictationDaemon, "_recognize"):
+        st = run_streaming()
+        fed = st["fed"]
+        contiguous = fed == list(range(fed[0], fed[0] + len(fed))) if fed else False
+        if (contiguous and fed[0] <= 1 and len(fed) >= N_CHUNKS * 0.9
+                and st["fed_sizes"] == {CHUNK // 2} and st["resamplers"] == 1):
+            print(f"R10 PASS: {len(fed)} чанков в feed подряд, каждый {CHUNK // 2} байт "
+                  f"после ресемплинга 16->8 кГц")
+        else:
+            print(f"R10 FAIL: первые {fed[:5]}, всего {len(fed)}, размеры {st['fed_sizes']}, "
+                  f"ресемплеров {st['resamplers']}")
+            ok = False
+
+        typed = st["typed"]
+        printed_ids = [int(x) for t in typed for x in t.split() if x.isdigit()]
+        if ("partial" not in " ".join(typed) and printed_ids == fed
+                and len(typed) >= 2 and st["finalize_calls"] == 1 and st["drained"]):
+            print(f"R11 PASS: {len(typed) - 1} фраз по ходу + остаток из finalize, "
+                  f"напечатано ровно то, что подано; гипотезы не печатались")
+        else:
+            print(f"R11 FAIL: напечатано {typed[:4]}..., finalize {st['finalize_calls']}, "
+                  f"совпадает с поданным: {printed_ids == fed}")
+            ok = False
+
+        c = run_streaming(cancel_midway=True)
+        leaked = len(c["typed"]) - c["typed_before"]
+        if (c["fed_before"] > 0 and c["finalize_calls"] == 0 and c["reset_calls"] >= 1
+                and leaked <= 1 and c["drained"] and c["state"] == cli.DaemonState.IDLE
+                and c["resampler_resets"] >= 1):
+            print(f"R12 PASS: отмена после {c['fed_before']} чанков: finalize не звали, "
+                  f"reset и сброс ресемплера были, демон в IDLE")
+        else:
+            print(f"R12 FAIL: {dict((k, c[k]) for k in ('fed_before', 'finalize_calls', 'reset_calls', 'drained', 'state', 'resampler_resets'))}, "
+                  f"допечатано после отмены {leaked}")
+            ok = False
+
+        if r["resamplers"] == 0:
+            print("R13 PASS: бэкенд на частоте записи — ресемплер не создавался")
+        else:
+            print(f"R13 FAIL: для 16 кГц бэкенда создано ресемплеров: {r['resamplers']}")
+            ok = False
+    else:
+        print("R10-R13 SKIP: в этой версии нет потокового режима в воркере")
 
     print("ALL PASS" if ok else "FAILED")
     return 0 if ok else 1

@@ -409,7 +409,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         .def("reset", &nerd_dictation::audio::Resampler::reset,
              py::call_guard<py::gil_scoped_release>(),
              "Drop filter history before an unrelated signal")
-        .def("in_rate", &nerd_dictation::audio::Resampler::in_rate)
         .def("out_rate", &nerd_dictation::audio::Resampler::out_rate);
 
     // AudioPreprocessor class
@@ -476,9 +475,6 @@ PYBIND11_EMBEDDED_MODULE(_nerd_dictation_native, m) {
         // Все пять методов берут SpellCorrector::mutex_, а correct() держит
         // его десятки миллисекунд. Ждать этот мьютекс с GIL в руках значит
         // останавливать все потоки Python.
-        .def("load_model", &nerd_dictation::spelling::SpellCorrector::load_model,
-             py::call_guard<py::gil_scoped_release>(),
-             py::arg("model_path"), "Load JamSpell model from file")
         .def("is_loaded", &nerd_dictation::spelling::SpellCorrector::is_loaded,
              py::call_guard<py::gil_scoped_release>(),
              "Check if model is loaded")

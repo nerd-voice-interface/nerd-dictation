@@ -67,10 +67,8 @@ def load_config() -> dict:
 
     # Встроенный дефолт
     return {
-        "general": {"backend": "vosk", "input_method": "xdotool"},
+        "general": {"backend": "gigaam-native", "input_method": "xdotool"},
         "audio": {"source": "pw-cat", "sample_rate": 16000, "chunk_size": 8000, "bt_fallback": True},
-        "vosk": {"model_path": "~/.local/share/vosk/vosk-model-ru"},
-        "gigaam": {"model_name": "v3_ctc", "device": "cuda"},
         "output": {"trailing_space": True},
     }
 
@@ -134,6 +132,8 @@ class DictationDaemon:
         # Без лимита — отставание не должно стоить ни одного слова.
         self._segment_queue: Queue = Queue()
         self._recognizer_thread: Optional[threading.Thread] = None
+        # Ресемплер к частоте бэкенда; принадлежит воркеру распознавания
+        self._resampler = None
         # Поколение сессии: воркер отбрасывает сегменты отменённой диктовки
         self._session_id = 0
         self._discarded_session = None
@@ -196,29 +196,16 @@ class DictationDaemon:
         """Загрузить бэкенд и модель в память."""
         from . import get_backend
 
-        backend_name = backend_name or self.config.get("general", {}).get("backend", "vosk")
+        backend_name = backend_name or self.config.get("general", {}).get("backend", "gigaam-native")
 
         if self.backend and self.backend_name == backend_name:
             print(f"Бэкенд {backend_name} уже загружен", file=sys.stderr)
             return
 
+        # Модель встроена в .so: загрузка бэкенда и есть загрузка модели
         print(f"Загрузка бэкенда: {backend_name}...", file=sys.stderr)
         self.backend = get_backend(backend_name)
         self.backend_name = backend_name
-
-        backend_config = self.config.get(backend_name, {})
-        sample_rate = self.config.get("audio", {}).get("sample_rate", 16000)
-
-        if backend_name == "vosk":
-            model_path = os.path.expanduser(backend_config.get("model_path", ""))
-            self.backend.load_model(model_path, sample_rate=sample_rate)
-        elif backend_name == "gigaam":
-            self.backend.load_model(
-                model_name=backend_config.get("model_name", "v3_ctc"),
-                device=backend_config.get("device", "cuda"),
-            )
-        else:
-            self.backend.load_model(**backend_config)
 
         print(f"Бэкенд {backend_name} загружен и готов", file=sys.stderr)
 
@@ -568,11 +555,9 @@ class DictationDaemon:
         session_id = self._session_id
 
         try:
-            # Проверяем, поддерживает ли бэкенд потоковое распознавание
-            is_streaming = getattr(self.backend, 'supports_streaming', True)
-
-            if is_streaming:
-                self._dictation_loop_streaming(sample_rate)
+            # Потоковость знает только загруженный бэкенд (get_info)
+            if self.backend.supports_streaming:
+                self._dictation_loop_streaming(sample_rate, session_id)
             else:
                 self._dictation_loop_buffered(sample_rate)
         finally:
@@ -581,27 +566,36 @@ class DictationDaemon:
             # и диктовка не начнётся уже никогда.
             self._segment_queue.put((session_id, None))
 
-    def _dictation_loop_streaming(self, sample_rate: int) -> None:
-        """Цикл диктовки для потоковых бэкендов."""
-        try:
-            for result in self.backend.transcribe_stream(
-                self._audio_stream(),
-                sample_rate=sample_rate,
-            ):
-                if self._stop_dictation.is_set():
-                    break
-                if result.is_final and result.text:
-                    self._type_text(result.text)
+    def _enqueue_audio(self, session_id: int, audio: bytes, sample_rate: int) -> None:
+        """Отдать аудио воркеру распознавания и учесть отставание.
 
-            print("[daemon] вызываю finalize", file=sys.stderr)
-            final = self.backend.finalize()
-            if final and final.text:
-                self._type_text(final.text)
-        except Exception as e:
-            print(f"Ошибка диктовки: {e}", file=sys.stderr)
-        finally:
-            self.backend.reset()
-            self.state = DaemonState.IDLE
+        Бэкенд здесь НЕ вызывается: распознавание не должно останавливать
+        потребление аудио, иначе кольцевой буфер вытесняет речь.
+        """
+        seconds = len(audio) / (sample_rate * 2)
+        with self._pending_lock:
+            self._pending_seconds += seconds
+            pending = self._pending_seconds
+        self._segment_queue.put((session_id, audio))
+
+        if pending >= self.LAG_WARN_SECONDS:
+            print(
+                f"[daemon] ВНИМАНИЕ: распознавание отстаёт на {pending:.1f}s "
+                f"(в очереди {self._segment_queue.qsize()})",
+                file=sys.stderr,
+            )
+
+    def _dictation_loop_streaming(self, sample_rate: int, session_id: int) -> None:
+        """Цикл диктовки для потоковых бэкендов (t-one).
+
+        Без VAD: потоковый бэкенд сам находит конец фразы по тишине, поэтому
+        воркеру уходит каждый чанк как есть.
+        """
+        for chunk in self._audio_stream():
+            if self._stop_dictation.is_set():
+                break
+            if chunk:
+                self._enqueue_audio(session_id, chunk, sample_rate)
 
     def _dictation_loop_buffered(self, sample_rate: int) -> None:
         """
@@ -669,19 +663,7 @@ class DictationDaemon:
 
             segment = bytes(audio_buffer)
             audio_buffer.clear()
-            seconds = len(segment) / (sample_rate * 2)
-
-            with self._pending_lock:
-                self._pending_seconds += seconds
-                pending = self._pending_seconds
-            self._segment_queue.put((session_id, segment))
-
-            if pending >= self.LAG_WARN_SECONDS:
-                print(
-                    f"[daemon] ВНИМАНИЕ: распознавание отстаёт на {pending:.1f}s "
-                    f"(очередь {self._segment_queue.qsize()} сегментов)",
-                    file=sys.stderr,
-                )
+            self._enqueue_audio(session_id, segment, sample_rate)
 
         try:
             for chunk in self._audio_stream():
@@ -774,37 +756,84 @@ class DictationDaemon:
                     self._pending_seconds -= len(segment) / (sample_rate * 2)
                 continue
 
+            # Отдельный метод, а не тело цикла: его локальная ссылка на бэкенд
+            # умирает на возврате. Иначе цикл держал бы её, ожидая очередь, и
+            # после reload старая модель жила бы в видеопамяти.
             if segment is None:
-                # Сессия дошла до конца: очередь этой сессии разобрана
-                self.backend.reset()
-                with self._pending_lock:
-                    self._pending_seconds = 0.0
-                self.state = DaemonState.IDLE
-                continue
+                self._finish_session(session_id)
+            else:
+                self._recognize(segment, sample_rate)
 
-            seconds = len(segment) / (sample_rate * 2)
-            started = time.monotonic()
+    def _finish_session(self, session_id: int) -> None:
+        """Маркер конца сессии: дожать остаток, сбросить состояние, вернуть IDLE."""
+        backend = self.backend
+        # Потоковый бэкенд держит недоговорённую фразу — дожимаем её,
+        # если сессию не отменили
+        if backend.supports_streaming and session_id != self._discarded_session:
             try:
-                self.backend._backend.feed(segment)
-                result = self.backend._backend.finalize()
-                text = result.text.strip() if result.text else ""
+                self._print_recognized(backend.finalize().text)
             except Exception as e:
-                print(f"[recognizer] ошибка распознавания: {e}", file=sys.stderr)
-                text = ""
-            elapsed = time.monotonic() - started
+                print(f"[recognizer] ошибка finalize: {e}", file=sys.stderr)
+        backend.reset()
+        # История фильтра ресемплера не должна перетекать в следующую сессию
+        if self._resampler is not None:
+            self._resampler.reset()
+        with self._pending_lock:
+            self._pending_seconds = 0.0
+        self.state = DaemonState.IDLE
 
-            with self._pending_lock:
-                self._pending_seconds -= seconds
+    def _recognize(self, segment: bytes, sample_rate: int) -> None:
+        """Подать сегмент (буферный режим) или чанк (потоковый) в бэкенд."""
+        backend = self.backend
+        streaming = backend.supports_streaming
 
+        # Бэкенд может ждать другую частоту (t-one — 8 кГц), а VAD, wake word
+        # и кольцевой буфер живут на частоте записи: конвертируем перед feed
+        if backend.sample_rate != sample_rate:
+            if self._resampler is None or self._resampler.out_rate() != backend.sample_rate:
+                from _nerd_dictation_native import audio as native_audio
+                self._resampler = native_audio.Resampler(sample_rate, backend.sample_rate)
+            audio = self._resampler.process(segment)
+        else:
+            audio = segment
+
+        seconds = len(segment) / (sample_rate * 2)
+        started = time.monotonic()
+        text = ""
+        try:
+            backend.feed(audio)
+            if streaming:
+                # Промежуточный текст ещё может измениться — печатаем
+                # только завершённую фразу
+                result = backend.result()
+                if result.is_final:
+                    text = result.text
+            else:
+                text = backend.finalize().text
+        except Exception as e:
+            print(f"[recognizer] ошибка распознавания: {e}", file=sys.stderr)
+        elapsed = time.monotonic() - started
+
+        with self._pending_lock:
+            self._pending_seconds -= seconds
+
+        # Потоковый режим идёт порциями по 0.25 s: пишем только медленные,
+        # иначе журнал утонет; сегменты VAD — всегда
+        if not streaming or elapsed > seconds:
             print(
-                f"[recognizer] сегмент {seconds:.2f}s распознан за {elapsed:.2f}s "
-                f"(RTF {elapsed / seconds:.2f})",
+                f"[recognizer] {'чанк' if streaming else 'сегмент'} {seconds:.2f}s "
+                f"распознан за {elapsed:.2f}s (RTF {elapsed / seconds:.2f})",
                 file=sys.stderr,
             )
 
-            if text:
-                print(f"[daemon] распознано: '{text}'", file=sys.stderr)
-                self._type_text(text)
+        self._print_recognized(text)
+
+    def _print_recognized(self, text: str) -> None:
+        """Напечатать распознанный текст, если он не пустой."""
+        text = text.strip() if text else ""
+        if text:
+            print(f"[daemon] распознано: '{text}'", file=sys.stderr)
+            self._type_text(text)
 
     def begin_dictation(self) -> dict:
         """Начать диктовку."""

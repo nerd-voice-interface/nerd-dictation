@@ -39,6 +39,7 @@ IGNORED = {"__init__", "__repr__", "__str__", "__enter__", "__exit__", "__bool__
 REQUIRED = {
     "BackendInfo": "тип, который возвращает Backend.get_info(): без регистрации "
                    "pybind11 не сконвертирует результат",
+    "ASRResult": "тип, который возвращают Backend.result() и finalize()",
 }
 
 

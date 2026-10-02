@@ -10,22 +10,21 @@ nerd-dictation-ex backends
 
 from typing import Dict, Type
 
-from .base import ASRBackend, ASRResult
-from .native import GigaAMNativeBackend, TOneNativeBackend, DummyNativeBackend
+from .native import NativeBackend, GigaAMNativeBackend, TOneNativeBackend, DummyNativeBackend
 
-_BACKENDS: Dict[str, Type[ASRBackend]] = {
+_BACKENDS: Dict[str, Type[NativeBackend]] = {
     "gigaam-native": GigaAMNativeBackend,
     "t-one-native": TOneNativeBackend,
     "dummy-native": DummyNativeBackend,
 }
 
 
-def get_available_backends() -> Dict[str, Type[ASRBackend]]:
+def get_available_backends() -> Dict[str, Type[NativeBackend]]:
     """Получить словарь доступных бэкендов."""
     return dict(_BACKENDS)
 
 
-def get_backend(name: str, **kwargs) -> ASRBackend:
+def get_backend(name: str, **kwargs) -> NativeBackend:
     """Получить экземпляр бэкенда по имени."""
     if name not in _BACKENDS:
         raise ValueError(f"Бэкенд '{name}' не найден. Доступны: {', '.join(_BACKENDS)}")
@@ -47,8 +46,7 @@ def list_backends() -> None:
 
 
 __all__ = [
-    "ASRBackend",
-    "ASRResult",
+    "NativeBackend",
     "get_backend",
     "get_available_backends",
     "list_backends",

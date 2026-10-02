@@ -6,9 +6,7 @@
 
 import sys
 from pathlib import Path
-from typing import Generator, Optional
-
-from .base import ASRBackend, ASRResult
+from typing import Optional
 
 # Попытка импорта нативного модуля
 _native = None
@@ -46,16 +44,20 @@ def _find_backend_library(name: str) -> Optional[Path]:
     return None
 
 
-class NativeBackend(ASRBackend):
+class NativeBackend:
     """
-    Нативный ASR бэкенд через C++.
+    ASR-бэкенд в нативной .so (GigaAM, T-One и др.), загружаемый через dlopen.
 
-    Загружает .so модули (GigaAM, T-One и др.) через dlopen.
-    Поддерживает потоковое распознавание.
+    Методы повторяют C API бэкенда (include/nerd_dictation/backend_api.h):
+    feed копит аудио, result отдаёт текущую гипотезу потокового бэкенда,
+    finalize дожимает остаток, reset начинает заново. Звать их можно только
+    из одного потока — воркера распознавания демона.
+
+    supports_streaming и sample_rate известны только после загрузки
+    (nerd_dictation_get_info требует созданного экземпляра).
     """
 
     name: str = "native"
-    supports_streaming: bool = True
 
     def __init__(self, backend_name: str = "gigaam", library_path: Optional[str] = None):
         """
@@ -99,88 +101,22 @@ class NativeBackend(ASRBackend):
 
         print(f"[NativeBackend] Loaded '{self.name}' (streaming={self.supports_streaming}, rate={self._sample_rate})", file=sys.stderr)
 
-    def load_model(self, model_path: str = "", **kwargs) -> None:
-        """Модель встроена в .so, этот метод ничего не делает."""
-        # Нативные бэкенды обычно имеют встроенную модель
-        pass
+    @property
+    def sample_rate(self) -> int:
+        """Частота, которую ждёт модель; аудио другой частоты демон ресемплирует."""
+        return self._sample_rate
 
-    def transcribe_stream(
-        self,
-        audio_stream: Generator[bytes, None, None],
-        sample_rate: int = 16000,
-    ) -> Generator[ASRResult, None, None]:
-        """
-        Потоковое распознавание аудио.
+    def feed(self, audio: bytes) -> None:
+        """Подать int16 PCM на частоте sample_rate."""
+        self._backend.feed(audio)
 
-        Args:
-            audio_stream: Генератор байтов аудио (PCM 16-bit)
-            sample_rate: Частота дискретизации
+    def result(self):
+        """Текущий результат потокового бэкенда (text, is_final, confidence)."""
+        return self._backend.result()
 
-        Yields:
-            ASRResult с распознанным текстом
-        """
-        if sample_rate != self._sample_rate:
-            print(f"[NativeBackend] Warning: sample rate mismatch ({sample_rate} vs {self._sample_rate})", file=sys.stderr)
-
-        last_text = ""
-
-        for chunk in audio_stream:
-            if not chunk:
-                continue
-
-            # Подать аудио в бэкенд
-            self._backend.feed(chunk)
-
-            # Получить результат
-            result = self._backend.result()
-
-            # Отдать результат если текст изменился или это финальный
-            if result.is_final or (result.text and result.text != last_text):
-                yield ASRResult(
-                    text=result.text,
-                    is_final=result.is_final,
-                    confidence=result.confidence if result.confidence >= 0 else None,
-                )
-
-                if result.is_final:
-                    last_text = ""
-                else:
-                    last_text = result.text
-
-    def transcribe_file(self, audio_path: str) -> str:
-        """Распознать аудиофайл целиком."""
-        import wave
-
-        with wave.open(audio_path, 'rb') as wf:
-            if wf.getnchannels() != 1:
-                raise ValueError("Только моно аудио поддерживается")
-            if wf.getsampwidth() != 2:
-                raise ValueError("Только 16-bit аудио поддерживается")
-
-            sample_rate = wf.getframerate()
-            if sample_rate != self._sample_rate:
-                print(f"[NativeBackend] Warning: sample rate mismatch ({sample_rate} vs {self._sample_rate})", file=sys.stderr)
-
-            # Читаем всё аудио
-            audio_data = wf.readframes(wf.getnframes())
-
-        # Подаём всё аудио
-        self._backend.feed(audio_data)
-
-        # Финализируем и получаем результат
-        result = self._backend.finalize()
-        return result.text
-
-    def finalize(self) -> Optional[ASRResult]:
-        """Завершить распознавание и получить финальный результат."""
-        result = self._backend.finalize()
-        if result.text:
-            return ASRResult(
-                text=result.text,
-                is_final=True,
-                confidence=result.confidence if result.confidence >= 0 else None,
-            )
-        return None
+    def finalize(self):
+        """Распознать накопленное и вернуть финальный результат."""
+        return self._backend.finalize()
 
     def reset(self) -> None:
         """Сбросить состояние распознавателя."""
