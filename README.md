@@ -168,7 +168,7 @@ cat > ~/.config/nerd-dictation/config.toml << 'EOF'
 [general]
 backend = "dummy"              # Backend name: "dummy", "t-one", "gigaam", etc.
 backend_library = ""           # Path to backend .so file (empty = auto-detect)
-input_method = "xdotool"      # Input method: "xdotool", "ydotool", "stdout"
+input_method = "auto"         # Input method: "auto", "xdotool", "ydotool", "stdout"
 
 [audio]
 source = "pw-cat"             # Audio source: "pw-cat", "parecord", etc.
@@ -190,6 +190,11 @@ EOF
 
 - **Input method:**
   - `input_method` — Method for simulating input:
+    - `"auto"` (default) — the Linux text console when it is in front, through
+      the typing socket of [tty-i3-keys](https://github.com/dmikushin/tty-i3-keys)
+      (`/run/tty-i3-keys-type.sock`; a user process cannot inject input into a
+      VT itself); otherwise X11 via `xdotool`. On the console, key commands
+      type their bytes (`ctrl+Return` is Enter)
     - `"xdotool"` — X11 input simulation (requires `xdotool`)
     - `"ydotool"` — Wayland input simulation (requires `ydotool`)
     - `"stdout"` — Output to stdout (for testing)

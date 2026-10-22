@@ -534,6 +534,13 @@ endif()
 # libdl is needed for dlopen
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
 
+# The "auto" input method from the command line, for tty-i3-keys' test of
+# typing on the text console (make console_type_driver).
+add_executable(console_type_driver EXCLUDE_FROM_ALL
+    tests/console_type_driver.cpp ${SOURCE_DIR}/input/input_simulator.cpp)
+target_include_directories(console_type_driver PRIVATE ${INCLUDE_DIR})
+target_link_libraries(console_type_driver PRIVATE spdlog::spdlog)
+
 # ============================================================================
 # Tests (if enabled)
 # ============================================================================

@@ -67,7 +67,7 @@ def load_config() -> dict:
 
     # Встроенный дефолт
     return {
-        "general": {"backend": "gigaam-native", "input_method": "xdotool"},
+        "general": {"backend": "gigaam-native", "input_method": "auto"},
         "audio": {"source": "pw-cat", "sample_rate": 16000, "chunk_size": 8000, "bt_fallback": True},
         "output": {"trailing_space": True},
     }

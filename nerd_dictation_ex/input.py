@@ -13,7 +13,7 @@ _simulator = None
 def _get_simulator(config: dict) -> InputSimulator:
     """Получить или создать симулятор ввода."""
     global _simulator
-    method = config.get("general", {}).get("input_method", "xdotool")
+    method = config.get("general", {}).get("input_method", "auto")
 
     if _simulator is None:
         _simulator = InputSimulator(method)
