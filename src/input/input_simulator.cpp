@@ -27,6 +27,10 @@ namespace {
 // CAP_SYS_ADMIN). See TypeService in tty-i3-keys for the protocol.
 constexpr const char* CONSOLE_TYPE_SOCKET = "/run/tty-i3-keys-type.sock";
 constexpr int CONSOLE_REPLY_SECONDS = 10;
+// The service types at keyboard pace (12 ms per character, as xdotool does)
+// and replies when done: allow that on top of the base timeout, counting
+// bytes, which is at least the number of characters.
+constexpr double CONSOLE_SECONDS_PER_BYTE = 0.012;
 
 enum class Console { Typed, X, Unavailable };
 
@@ -41,8 +45,9 @@ Console console_type(const std::string& bytes) {
     addr.sun_family = AF_UNIX;
     std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", CONSOLE_TYPE_SOCKET);
     timeval timeout{CONSOLE_REPLY_SECONDS, 0};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    timeout.tv_sec += static_cast<time_t>(bytes.size() * CONSOLE_SECONDS_PER_BYTE) + 1;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         close(fd);
         return Console::Unavailable;    // no tty-i3-keys: X as before
