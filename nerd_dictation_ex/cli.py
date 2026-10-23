@@ -154,6 +154,10 @@ class DictationDaemon:
         # begin_dictation зовут и командный поток, и поток wake word —
         # проверка состояния и переход обязаны быть неделимы
         self._lifecycle_lock = threading.RLock()
+        # Проверка отмены и печать сегмента — под одной блокировкой с
+        # пометкой сессии к выбросу: после возврата cancel не печатается
+        # ничего (сегмент, который уже печатается, допечатывается)
+        self._typing_lock = threading.Lock()
 
         # Кнопка-триггер: захватывает и проверяет её сам демон (см. trigger в main.cpp)
         self._trigger_button = int(
@@ -719,12 +723,13 @@ class DictationDaemon:
         Отмена проверяется здесь, а не только при выемке из очереди: cancel
         может прийти, пока сегмент уже распознаётся (GigaAM — секунды).
         """
-        if session_id == self._discarded_session:
-            return
-        text = text.strip() if text else ""
-        if text:
-            print(f"[daemon] распознано: '{text}'", file=sys.stderr)
-            self._type_text(text)
+        with self._typing_lock:
+            if session_id == self._discarded_session:
+                return
+            text = text.strip() if text else ""
+            if text:
+                print(f"[daemon] распознано: '{text}'", file=sys.stderr)
+                self._type_text(text)
 
     def begin_dictation(self) -> dict:
         """Начать диктовку."""
@@ -792,7 +797,8 @@ class DictationDaemon:
             # Помечаем сессию к выбросу: воркер пропустит её сегменты, но
             # маркер конца отработает штатно и переведёт демон в IDLE.
             # backend.reset() отсюда НЕ вызываем — воркер может быть в finalize().
-            self._discarded_session = self._session_id
+            with self._typing_lock:
+                self._discarded_session = self._session_id
             self._dictation_active = False
             self.state = DaemonState.FINALIZING
 

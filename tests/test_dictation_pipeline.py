@@ -36,6 +36,8 @@ _audio_stream, реальный _dictation_loop_buffered и воркер; вме
   R16 pw-cat пишет сырой PCM (--raw)
   R17 без связи с сервером begin отказывает с причиной, сегмент с ошибкой
       связи не печатается и не роняет воркер
+  R18 cancel во время печати сегмента: после возврата cancel не начинается
+      печать ни одного сегмента отменённой сессии
 
 Запуск:  python3 tests/test_dictation_pipeline.py
 """
@@ -594,6 +596,35 @@ def run_server_failures():
             "resamplers": len(_FakeResampler.created)}
 
 
+def run_cancel_while_typing():
+    """R18 — печать идёт 0.3 s на сегмент; cancel посреди неё."""
+    del TYPED[:]
+    d = make_daemon()
+    starts = []
+
+    def slow_type(text):
+        starts.append(time.monotonic())
+        time.sleep(0.3)
+        with TYPED_LOCK:
+            TYPED.append(text)
+
+    d._type_text = slow_type
+    d._start_audio_listener()
+    d._start_recognizer()
+    d.begin_dictation()
+    end = time.monotonic() + 10
+    while not starts and time.monotonic() < end:
+        time.sleep(0.01)
+    time.sleep(0.1)                  # a segment is being typed right now
+    d.cancel_dictation()
+    returned = time.monotonic()
+    idle = wait_idle(d, timeout=30.0)
+    time.sleep(0.5)
+    d._running = False
+    return {"typed_while": len(starts), "started_after_cancel": sum(t > returned for t in starts),
+            "idle": idle}
+
+
 def run_no_server():
     """R17 — без сервера: begin отказывает, сегмент не печатается."""
     del TYPED[:]
@@ -822,6 +853,14 @@ def main():
               f"ошибкой связи не напечатаны, воркер жив, демон в IDLE")
     else:
         print(f"R17 FAIL: {n}")
+        ok = False
+
+    ct = run_cancel_while_typing()
+    if ct["typed_while"] >= 1 and ct["started_after_cancel"] == 0 and ct["idle"]:
+        print(f"R18 PASS: cancel во время печати: после его возврата печать не начиналась "
+              f"({ct['typed_while']} сегмент(а) начаты до)")
+    else:
+        print(f"R18 FAIL: {ct}")
         ok = False
 
     print("ALL PASS" if ok else "FAILED")

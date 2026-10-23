@@ -49,7 +49,11 @@ client (every machine with a microphone)        server (machines with a recogniz
   version, u32 rate = 16000, u8 channels = 1, backend name) | ERROR, then
   AUDIO (int16, 16 kHz mono, one segment, <= 30 s) -> TEXT | ERROR, one
   segment in flight per connection; at most 8 clients and 8 queued
-  segments.
+  segments. A segment whose reply was lost with the link is sent once more
+  after the reconnect: recognized at most twice, typed at most once. A
+  client may stay connected idle (that is the long-lived link), so 8
+  idle clients of the same user fill the server; only that user, locally
+  or through ssh, can connect at all.
 
 Worst case for one client: its segment waits behind the segments already
 queued, at most one per connected client, each up to 30 s of audio (25 s

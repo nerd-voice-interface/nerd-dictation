@@ -420,25 +420,36 @@ class _Link:
     `ssh <host>` running the bridge (a socketpair, so a dead peer is an
     error, not a SIGPIPE)."""
 
+    STDERR_KEEP = 2048
+
     def __init__(self, sock: socket.socket, proc=None):
         self.sock = sock
         self.proc = proc
         self.server = ""            # the server's backend name from INFO
+        self._stderr = b""
+        if proc and proc.stderr:
+            # Drained all the time: ssh blocked on a full stderr pipe would
+            # stall the link; the tail is kept for error messages
+            threading.Thread(target=self._drain, args=(proc.stderr,), daemon=True).start()
+
+    def _drain(self, pipe) -> None:
+        try:
+            while True:
+                chunk = os.read(pipe.fileno(), 4096)
+                if not chunk:
+                    return
+                self._stderr = (self._stderr + chunk)[-self.STDERR_KEEP:]
+        except (OSError, ValueError):
+            return
 
     def stderr(self) -> str:
-        """What ssh or the bridge said so far (non-blocking)."""
-        if not self.proc or not self.proc.stderr:
-            return ""
-        out = b""
-        while len(out) < 2048:
-            ready, _, _ = select.select([self.proc.stderr], [], [], 0)
-            if not ready:
-                break
-            chunk = os.read(self.proc.stderr.fileno(), 512)
-            if not chunk:
-                break
-            out += chunk
-        return out.decode(errors="replace").strip()
+        """What ssh or the bridge said lately (its last lines)."""
+        if self.proc and self.proc.stderr:
+            time.sleep(0.05)        # let the drain thread catch a last message
+        lines = [l for l in self._stderr.decode(errors="replace").splitlines()
+                 # ssh's advisory, printed on every connection to some hosts
+                 if "post-quantum" not in l and "upgrade.html" not in l]
+        return " ".join(l.strip() for l in lines if l.strip())
 
     def exited(self) -> bool:
         """The link is gone: ssh exited, or the server closed the socket.
@@ -466,8 +477,6 @@ class _Link:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait()
-            if self.proc.stderr:
-                self.proc.stderr.close()
             self.proc = None
 
 
@@ -554,6 +563,11 @@ class AsrClient:
             theirs.close()
             link = _Link(ours, proc)
         self._connecting = link
+        if self._stopping.is_set():
+            # stop() ran before it could see this link: end it here
+            self._connecting = None
+            link.close()
+            return None, f"{self.label}: shutting down"
         try:
             send_frame(link.sock, HELLO, struct.pack("<H", PROTOCOL_VERSION))
             frame = recv_frame(link.sock, idle_timeout=HANDSHAKE_SECONDS,
