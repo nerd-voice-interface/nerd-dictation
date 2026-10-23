@@ -4,7 +4,6 @@
 Загружает .so бэкенды (GigaAM, T-One и др.) через нативную обёртку.
 """
 
-import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -154,14 +153,3 @@ class DummyNativeBackend(NativeBackend):
             kwargs.setdefault("library_path", str(build_path))
         super().__init__(backend_name="dummy", **kwargs)
 
-
-class RemoteNativeBackend(NativeBackend):
-    """Распознавание на другой машине через ssh (libnerd-dictation-remote.so)"""
-
-    name = "remote"
-
-    def __init__(self, host: str, **kwargs):
-        # C API бэкенда не принимает параметров: хост уходит в .so через
-        # окружение, которое она читает в nerd_dictation_create
-        os.environ["NERD_DICTATION_REMOTE_HOST"] = host
-        super().__init__(backend_name="remote", **kwargs)

@@ -494,31 +494,22 @@ install(DIRECTORY ${INCLUDE_DIR}/nerd_dictation
 # Systemd Service
 # ============================================================================
 
-# Configure systemd service file with install prefix substitution
+# Configure the systemd user units (client and server) with the install prefix
 # Use absolute path for CMAKE_INSTALL_PREFIX
 get_filename_component(ABS_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
 set(ABS_INSTALL_PREFIX "${ABS_INSTALL_PREFIX}")  # Ensure variable is set
-configure_file(
-    ${CMAKE_SOURCE_DIR}/systemd/nerd-dictation.service.in
-    ${CMAKE_BINARY_DIR}/nerd-dictation.service
-    @ONLY
-    NEWLINE_STYLE UNIX
-)
-
-# Install systemd service file (only if not system installation)
-if(NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr" AND 
-   NOT CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
-    # Local installation - to lib/systemd/user
-    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation.service
-        DESTINATION lib/systemd/user
+foreach(unit nerd-dictation nerd-dictation-server)
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/systemd/${unit}.service.in
+        ${CMAKE_BINARY_DIR}/${unit}.service
+        @ONLY
+        NEWLINE_STYLE UNIX
     )
-    message(STATUS "Systemd service will be installed to: ${CMAKE_INSTALL_PREFIX}/lib/systemd/user/")
-else()
-    # System installation - to /usr/lib/systemd/user
-    install(FILES ${CMAKE_BINARY_DIR}/nerd-dictation.service
+    # A local prefix keeps its units under the prefix too (lib/systemd/user)
+    install(FILES ${CMAKE_BINARY_DIR}/${unit}.service
         DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/user
     )
-endif()
+endforeach()
 
 # ============================================================================
 # ASR Backends (late binding via dlopen)

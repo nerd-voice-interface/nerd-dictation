@@ -1,0 +1,19 @@
+[Unit]
+Description=nerd-dictation server: the ASR model, for local and remote clients
+Documentation=https://github.com/nerd-voice-interface/nerd-dictation/blob/master/docs/client-server.md
+
+[Service]
+Type=simple
+ExecStart=@ABS_INSTALL_PREFIX@/bin/nerd-dictation server
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+Environment="XDG_RUNTIME_DIR=%t"
+Environment="LD_LIBRARY_PATH=@ABS_INSTALL_PREFIX@/lib:@ABS_INSTALL_PREFIX@/lib/res_embed"
+
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

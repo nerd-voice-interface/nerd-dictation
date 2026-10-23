@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Проверка конвейера диктовки: распознавание не должно терять речь.
 
-Прогоняется через НАСТОЯЩИЙ путь данных: реальный _audio_listener_loop с
-подставленной командой записи, реальный _audio_stream, реальный
-_dictation_loop_buffered. Заглушками подменены только нативные модули,
-недоступные вне хост-процесса (_nerd_dictation_native embedded в C++ бинарь).
+Прогоняется через НАСТОЯЩИЙ путь данных клиента: реальный
+_audio_listener_loop с подставленной командой записи, реальный
+_audio_stream, реальный _dictation_loop_buffered и воркер; вместо связи с
+сервером (AsrClient) — FakeAsr. Сервер (asr.Recognizer) проверяется на
+заглушках бэкенда. Заглушками подменены и нативные модули, недоступные вне
+хост-процесса (_nerd_dictation_native embedded в C++ бинарь).
 
 Каждый 0.25-секундный чанк заполнен своим номером, поэтому потерю речи
 видно побайтово, а не по косвенным признакам.
@@ -20,15 +22,20 @@ _dictation_loop_buffered. Заглушками подменены только �
   R8  toggle в демоне: IDLE -> LISTENING -> FINALIZING, в FINALIZING отказ
   R9  поток кнопки: PRESSED переключает, REJECTED нет, после обрыва X
       и неудачного подключения — переподключение
-  R10 потоковый бэкенд на 8 кГц: все чанки дошли до feed по порядку, без
-      потерь, уже ресемплированными
-  R11 потоковый: завершённые фразы печатаются по ходу, остаток — из finalize
-      на end, промежуточные гипотезы не печатаются никогда
-  R12 потоковый cancel: ничего не печатается, finalize не зовут, reset — да
-  R13 бэкенд на частоте записи ресемплер не создаёт
+  R10 сервер, потоковый бэкенд на 8 кГц: сегмент дошёл до feed весь, по
+      порядку, шагами по 0.25 s, уже ресемплированным
+  R11 сервер, потоковый: текст сегмента = завершённые фразы + остаток из
+      finalize, промежуточные гипотезы в него не попадают; reset после
+  R12 сервер: сегмент ушедшего клиента не распознаётся; ошибка бэкенда —
+      ответ с ошибкой и reset, следующий сегмент распознаётся
+  R13 запись на частоте протокола: ресемплер не создаётся ни клиентом, ни
+      сервером с бэкендом на той же частоте
   R14 исключение при печати не убивает воркер: сессия завершается, демон
       возвращается в IDLE и принимает следующую диктовку
   R15 после остановки кольцевой буфер дочитывается до конца
+  R16 pw-cat пишет сырой PCM (--raw)
+  R17 без связи с сервером begin отказывает с причиной, сегмент с ошибкой
+      связи не печатается и не роняет воркер
 
 Запуск:  python3 tests/test_dictation_pipeline.py
 """
@@ -160,6 +167,7 @@ sys.modules.setdefault("_nerd_dictation_native.trigger", _native_trigger)
 sys.modules.setdefault("_nerd_dictation_native.audio", _native_audio)
 
 from nerd_dictation_ex import cli  # noqa: E402
+from nerd_dictation_ex import asr  # noqa: E402
 
 # Some scenarios replace it with a fake producer; R16 checks the real one
 _real_get_audio_command = cli._get_audio_command
@@ -221,8 +229,35 @@ class FakeNative:
         self.buf = b""
 
 
+class FakeAsr:
+    """Связь с сервером (AsrClient): распознаёт FakeNative, как сервер с
+    оффлайновым бэкендом (GigaAM) — сегмент целиком."""
+
+    label = "fake server"
+
+    def __init__(self):
+        self.native = FakeNative()
+        self.connected = True
+        self.fail = None            # текст RuntimeError, как при обрыве связи
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def status(self):
+        return (True, "fake") if self.connected else (False, "fake server unreachable")
+
+    def recognize(self, audio):
+        if self.fail:
+            raise RuntimeError(self.fail)
+        self.native.feed(audio)
+        return self.native.finalize().text
+
+
 class FakeBackend:
-    """Оффлайновый бэкенд (как GigaAM): частота записи, распознаёт сегмент целиком."""
+    """Оффлайновый бэкенд сервера (как GigaAM): 16 кГц, сегмент целиком."""
     supports_streaming = False
     sample_rate = SR
 
@@ -309,11 +344,10 @@ _native_audio.Resampler = _FakeResampler
 
 def make_daemon():
     cfg = {"audio": {"sample_rate": SR, "chunk_size": CHUNK, "source": "pw-cat"},
-           "wake_word": {"enabled": False}, "general": {}}
+           "wake_word": {"enabled": False}, "general": {}, "server": {"host": "local"}}
     cli._get_audio_command = lambda config: ["python3", "-c", PRODUCER]
     d = cli.DictationDaemon(cfg)
-    d.backend = FakeBackend()
-    d.backend_name = "fake"
+    d._asr = FakeAsr()
     return d
 
 
@@ -353,10 +387,10 @@ def run_main():
     time.sleep(5.0)
     d._running = False
 
-    seen = [i for seg in d.backend._backend.seen for i in seg]
+    seen = [i for seg in d._asr.native.seen for i in seg]
     return {
         "seen": seen,
-        "segments": list(d.backend._backend.seen),
+        "segments": list(d._asr.native.seen),
         "states": states,
         "drained": drained,
         "dropped": getattr(d, "_dropped_chunks", None),
@@ -501,38 +535,83 @@ def run_trigger_loop():
     }
 
 
-def run_streaming(cancel_midway=False):
-    """R10-R12 — потоковый бэкенд через тот же конвейер."""
-    del TYPED[:]
+def _segment(n_chunks, first=0):
+    """Сегмент 16 кГц из n_chunks 0.25-секундных чанков с номерами."""
+    return b"".join(i.to_bytes(2, "little") * (CHUNK // 2)
+                    for i in range(first, first + n_chunks))
+
+
+def run_server_streaming():
+    """R10, R11 — сервер с потоковым бэкендом на 8 кГц."""
     _FakeResampler.created.clear()
+    b = FakeStreamingBackend()
+    r = asr.Recognizer(b, "fake-stream")
+    r.start()
+    req = asr.Request(_segment(18), "test")
+    r.submit(req)
+    done = req.done.wait(5.0)
+    r.stop()
+    return {"done": done, "text": req.text, "error": req.error, "fed": list(b.fed),
+            "fed_sizes": set(b.fed_sizes), "finalize_calls": b.finalize_calls,
+            "reset_calls": b.reset_calls, "resamplers": len(_FakeResampler.created)}
+
+
+class _FailingBackend(FakeBackend):
+    """Первый finalize падает, дальше как обычно."""
+
+    def __init__(self):
+        super().__init__()
+        self.failed = False
+        self.resets = 0
+
+    def finalize(self):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("CUDA error")
+        return super().finalize()
+
+    def reset(self):
+        self.resets += 1
+        super().reset()
+
+
+def run_server_failures():
+    """R12, R13 (сервер) — ушедший клиент, ошибка бэкенда, без ресемплера."""
+    _FakeResampler.created.clear()
+    b = _FailingBackend()
+    r = asr.Recognizer(b, "fake")
+    r.start()
+    gone = asr.Request(_segment(4), "gone")
+    gone.cancelled = True
+    first = asr.Request(_segment(4), "first")
+    second = asr.Request(_segment(4, first=4), "second")
+    for req in (gone, first, second):
+        r.submit(req)
+    ok = all(req.done.wait(5.0) for req in (gone, first, second))
+    r.stop()
+    return {"ok": ok, "gone": (gone.text, gone.error), "first_error": first.error,
+            "second": second.text, "resets": b.resets, "seen": b._backend.seen,
+            "resamplers": len(_FakeResampler.created)}
+
+
+def run_no_server():
+    """R17 — без сервера: begin отказывает, сегмент не печатается."""
+    del TYPED[:]
     d = make_daemon()
-    d.backend = FakeStreamingBackend()
+    d._asr.connected = False
+    refused = d.begin_dictation()
+    d._asr.connected = True
+    d._asr.fail = "fake server: связь потеряна"
     d._start_audio_listener()
     d._start_recognizer()
-
-    d.begin_dictation()
-    if cancel_midway:
-        time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP / 2)
-        typed_before = len(TYPED)
-        fed_before = len(d.backend.fed)
-        d.cancel_dictation()
-    else:
-        time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP + 0.5)
-        typed_before = fed_before = None
-        d.end_dictation()
-    drained = wait_idle(d, timeout=30.0)
-    time.sleep(0.3)
+    accepted = d.begin_dictation().get("status") == "ok"
+    time.sleep(N_CHUNKS * CHUNK_S / SPEEDUP / 2)
+    d.end_dictation()
+    idle = wait_idle(d, timeout=30.0)
+    alive = d._recognizer_thread.is_alive()
     d._running = False
-
-    b = d.backend
-    return {
-        "fed": list(b.fed), "fed_sizes": set(b.fed_sizes), "typed": list(TYPED),
-        "finalize_calls": b.finalize_calls, "reset_calls": b.reset_calls,
-        "resamplers": len(_FakeResampler.created),
-        "resampler_resets": sum(r.resets for r in _FakeResampler.created),
-        "drained": drained, "typed_before": typed_before, "fed_before": fed_before,
-        "state": d.state,
-    }
+    return {"refused": (refused.get("status"), refused.get("message", "")),
+            "accepted": accepted, "idle": idle, "alive": alive, "typed": len(TYPED)}
 
 
 def run_print_failure():
@@ -675,49 +754,38 @@ def main():
     else:
         print("R8/R9 SKIP: в этой версии нет toggle в демоне")
 
-    if hasattr(cli.DictationDaemon, "_recognize"):
-        st = run_streaming()
-        fed = st["fed"]
-        contiguous = fed == list(range(fed[0], fed[0] + len(fed))) if fed else False
-        if (contiguous and fed[0] <= 1 and len(fed) >= N_CHUNKS * 0.9
-                and st["fed_sizes"] == {CHUNK // 2} and st["resamplers"] == 1):
-            print(f"R10 PASS: {len(fed)} чанков в feed подряд, каждый {CHUNK // 2} байт "
-                  f"после ресемплинга 16->8 кГц")
-        else:
-            print(f"R10 FAIL: первые {fed[:5]}, всего {len(fed)}, размеры {st['fed_sizes']}, "
-                  f"ресемплеров {st['resamplers']}")
-            ok = False
-
-        typed = st["typed"]
-        printed_ids = [int(x) for t in typed for x in t.split() if x.isdigit()]
-        if ("partial" not in " ".join(typed) and printed_ids == fed
-                and len(typed) >= 2 and st["finalize_calls"] == 1 and st["drained"]):
-            print(f"R11 PASS: {len(typed) - 1} фраз по ходу + остаток из finalize, "
-                  f"напечатано ровно то, что подано; гипотезы не печатались")
-        else:
-            print(f"R11 FAIL: напечатано {typed[:4]}..., finalize {st['finalize_calls']}, "
-                  f"совпадает с поданным: {printed_ids == fed}")
-            ok = False
-
-        c = run_streaming(cancel_midway=True)
-        leaked = len(c["typed"]) - c["typed_before"]
-        if (c["fed_before"] > 0 and c["finalize_calls"] == 0 and c["reset_calls"] >= 1
-                and leaked == 0 and c["drained"] and c["state"] == cli.DaemonState.IDLE
-                and c["resampler_resets"] >= 1):
-            print(f"R12 PASS: отмена после {c['fed_before']} чанков: finalize не звали, "
-                  f"reset и сброс ресемплера были, демон в IDLE")
-        else:
-            print(f"R12 FAIL: {dict((k, c[k]) for k in ('fed_before', 'finalize_calls', 'reset_calls', 'drained', 'state', 'resampler_resets'))}, "
-                  f"допечатано после отмены {leaked}")
-            ok = False
-
-        if r["resamplers"] == 0:
-            print("R13 PASS: бэкенд на частоте записи — ресемплер не создавался")
-        else:
-            print(f"R13 FAIL: для 16 кГц бэкенда создано ресемплеров: {r['resamplers']}")
-            ok = False
+    st = run_server_streaming()
+    fed = st["fed"]
+    if (st["done"] and fed == list(range(18)) and st["fed_sizes"] == {CHUNK // 2}
+            and st["resamplers"] == 1):
+        print(f"R10 PASS: сегмент из {len(fed)} чанков подан в feed подряд, шагами по "
+              f"{CHUNK // 2} байт после ресемплинга 16->8 кГц")
     else:
-        print("R10-R13 SKIP: в этой версии нет потокового режима в воркере")
+        print(f"R10 FAIL: {st}")
+        ok = False
+    ids = [int(x) for x in (st["text"] or "").split() if x.isdigit()]
+    if (st["error"] is None and ids == list(range(18)) and "partial" not in (st["text"] or "")
+            and st["finalize_calls"] == 1 and st["reset_calls"] == 1):
+        print("R11 PASS: текст = завершённые фразы + остаток finalize, без гипотез; reset после")
+    else:
+        print(f"R11 FAIL: {st}")
+        ok = False
+
+    sf = run_server_failures()
+    if (sf["ok"] and sf["gone"] == (None, None) and sf["first_error"]
+            and "CUDA error" in sf["first_error"] and sf["second"] == "4 5 6 7"
+            and sf["resets"] >= 2 and sf["seen"] == [[4, 5, 6, 7]]):
+        print("R12 PASS: сегмент ушедшего клиента пропущен, ошибка бэкенда -> ответ с "
+              "ошибкой и reset, следующий сегмент распознан")
+    else:
+        print(f"R12 FAIL: {sf}")
+        ok = False
+
+    if r["resamplers"] == 0 and sf["resamplers"] == 0:
+        print("R13 PASS: на частоте протокола ресемплер не создают ни клиент, ни сервер")
+    else:
+        print(f"R13 FAIL: ресемплеров у клиента {r['resamplers']}, у сервера {sf['resamplers']}")
+        ok = False
 
     if hasattr(cli.DictationDaemon, "_end_session_state"):
         e = run_print_failure()
@@ -745,6 +813,15 @@ def main():
         print("R16 PASS: pw-cat пишет сырой PCM (--raw)")
     else:
         print(f"R16 FAIL: команда записи без --raw: {cmd}")
+        ok = False
+
+    n = run_no_server()
+    if (n["refused"][0] == "error" and "unreachable" in n["refused"][1] and n["accepted"]
+            and n["idle"] and n["alive"] and n["typed"] == 0):
+        print(f"R17 PASS: без сервера begin отказал ({n['refused'][1]!r}), сегменты с "
+              f"ошибкой связи не напечатаны, воркер жив, демон в IDLE")
+    else:
+        print(f"R17 FAIL: {n}")
         ok = False
 
     print("ALL PASS" if ok else "FAILED")

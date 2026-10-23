@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-nerd-dictation-ex CLI — главная точка входа.
+nerd-dictation CLI — главная точка входа (docs/client-server.md).
 
 Использование:
-    # Запуск daemon через systemd (рекомендуется)
-    systemctl --user start nerd-dictation-ex
-    systemctl --user enable nerd-dictation-ex  # автозапуск
+    # Сервер распознавания (на машине с моделью) и клиент диктовки
+    systemctl --user start nerd-dictation-server   # nerd-dictation server
+    systemctl --user start nerd-dictation          # nerd-dictation daemon
 
     # Диктовка
-    nerd-dictation-ex toggle             # Переключить диктовку
-    nerd-dictation-ex begin              # Начать диктовку
-    nerd-dictation-ex end                # Завершить диктовку
-    nerd-dictation-ex cancel             # Отменить диктовку
+    nerd-dictation toggle             # Переключить диктовку
+    nerd-dictation begin              # Начать диктовку
+    nerd-dictation end                # Завершить диктовку
+    nerd-dictation cancel             # Отменить диктовку
 
     # Утилиты
-    nerd-dictation-ex list-backends      # Показать бэкенды
+    nerd-dictation list-backends      # Бэкенды, которые может загрузить сервер
 """
 
 import argparse
@@ -32,7 +32,7 @@ from pathlib import Path
 from collections import deque
 from typing import Optional, Generator
 
-from .remote_server import RemoteASRServer, RemoteRequest
+from .asr import AsrClient, SAMPLE_RATE as ASR_SAMPLE_RATE
 
 # Пути
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
@@ -69,7 +69,8 @@ def load_config() -> dict:
 
     # Встроенный дефолт
     return {
-        "general": {"backend": "gigaam-native", "input_method": "auto"},
+        "general": {"input_method": "auto"},
+        "server": {"host": "local"},
         "audio": {"source": "pw-cat", "sample_rate": 16000, "chunk_size": 8000, "bt_fallback": True},
         "output": {"trailing_space": True},
     }
@@ -89,7 +90,8 @@ class DaemonState(Enum):
 
 
 class DictationDaemon:
-    """Daemon для nerd-dictation-ex. Держит модель в памяти."""
+    """Клиент диктовки: запись, VAD, печать, команды. Распознаёт сервер
+    ([server] host: "local" или ssh-алиас), модели здесь нет."""
 
     # Размер кольцевого буфера в секундах
     AUDIO_BUFFER_SECONDS = 1.5
@@ -110,9 +112,10 @@ class DictationDaemon:
         self._debug_dir = os.path.expanduser(debug_dir) if debug_dir else None
         self._debug_segment_paths: dict = {}
         self.state = DaemonState.IDLE
-        self.backend = None
-        self.backend_name = None
-        self._asr_server = None
+        host = config.get("server", {}).get("host")
+        if not host:
+            raise ValueError('нет [server] host = "local" (или ssh-алиас сервера) в конфиге')
+        self._asr = AsrClient(host)
         self._audio_proc: Optional[subprocess.Popen] = None
         self._running = True
         self._dictation_thread: Optional[threading.Thread] = None
@@ -140,8 +143,6 @@ class DictationDaemon:
         # Без лимита — отставание не должно стоить ни одного слова.
         self._segment_queue: Queue = Queue()
         self._recognizer_thread: Optional[threading.Thread] = None
-        # Ресемплер к частоте бэкенда; принадлежит воркеру распознавания
-        self._resampler = None
         # Поколение сессии: воркер отбрасывает сегменты отменённой диктовки
         self._session_id = 0
         self._discarded_session = None
@@ -199,31 +200,6 @@ class DictationDaemon:
                     print("Spell correction: JamSpell не скомпилирован", file=sys.stderr)
             except Exception as e:
                 print(f"Spell correction: ошибка инициализации: {e}", file=sys.stderr)
-
-    def load_backend(self, backend_name: str = None) -> None:
-        """Загрузить бэкенд и модель в память."""
-        from . import get_backend
-
-        backend_name = backend_name or self.config.get("general", {}).get("backend", "gigaam-native")
-
-        if self.backend and self.backend_name == backend_name:
-            print(f"Бэкенд {backend_name} уже загружен", file=sys.stderr)
-            return
-
-        # Модель встроена в .so: загрузка бэкенда и есть загрузка модели
-        print(f"Загрузка бэкенда: {backend_name}...", file=sys.stderr)
-        if backend_name == "remote":
-            # Распознаёт другая машина (её демон, см. remote_server.py);
-            # host — алиас ssh, по которому до неё добраться
-            host = self.config.get("remote", {}).get("host")
-            if not host:
-                raise ValueError('backend "remote" требует [remote] host = "<ssh-алиас>" в конфиге')
-            self.backend = get_backend(backend_name, host=host)
-        else:
-            self.backend = get_backend(backend_name)
-        self.backend_name = backend_name
-
-        print(f"Бэкенд {backend_name} загружен и готов", file=sys.stderr)
 
     def _load_wake_word_models(self) -> bool:
         """Загрузить модели для wake word detection (Silero VAD + Vosk small)."""
@@ -561,11 +537,7 @@ class DictationDaemon:
         session_id = self._session_id
 
         try:
-            # Потоковость знает только загруженный бэкенд (get_info)
-            if self.backend.supports_streaming:
-                self._dictation_loop_streaming(sample_rate, session_id)
-            else:
-                self._dictation_loop_buffered(sample_rate)
+            self._dictation_loop_buffered(sample_rate)
         finally:
             # Маркер конца сессии обязан уйти при ЛЮБОМ выходе — включая ранний
             # return при отказе VAD. Без него воркер не переведёт демон в IDLE,
@@ -575,7 +547,7 @@ class DictationDaemon:
     def _enqueue_audio(self, session_id: int, audio: bytes, sample_rate: int) -> None:
         """Отдать аудио воркеру распознавания и учесть отставание.
 
-        Бэкенд здесь НЕ вызывается: распознавание не должно останавливать
+        Сервер здесь НЕ вызывается: распознавание не должно останавливать
         потребление аудио, иначе кольцевой буфер вытесняет речь.
         """
         seconds = len(audio) / (sample_rate * 2)
@@ -591,21 +563,9 @@ class DictationDaemon:
                 file=sys.stderr,
             )
 
-    def _dictation_loop_streaming(self, sample_rate: int, session_id: int) -> None:
-        """Цикл диктовки для потоковых бэкендов (t-one).
-
-        Без VAD: потоковый бэкенд сам находит конец фразы по тишине, поэтому
-        воркеру уходит каждый чанк как есть.
-        """
-        for chunk in self._audio_stream():
-            if self._stop_dictation.is_set():
-                break
-            if chunk:
-                self._enqueue_audio(session_id, chunk, sample_rate)
-
     def _dictation_loop_buffered(self, sample_rate: int) -> None:
         """
-        Цикл диктовки для offline бэкендов с VAD-сегментацией.
+        Цикл диктовки: VAD-сегментация, каждый сегмент уходит серверу.
 
         Нарезку делает VadSegmenter (segmenter.py) на нативном Silero VAD:
         распознаётся накопленный буфер, когда после речи наступает пауза.
@@ -662,10 +622,10 @@ class DictationDaemon:
         print("Воркер распознавания запущен", file=sys.stderr)
 
     def _recognizer_loop(self) -> None:
-        """Единственный поток, вызывающий бэкенд и печатающий текст.
+        """Единственный поток, отправляющий сегменты серверу и печатающий текст.
 
-        Распознаватель — нативный объект за pybind11, а input/postprocess/spelling
-        держат ленивые несинхронизированные глобалы. Держим их все в одном потоке.
+        input/postprocess/spelling держат ленивые несинхронизированные
+        глобалы, а сегменты одной сессии должны печататься по порядку.
         """
         from queue import Empty
 
@@ -679,12 +639,6 @@ class DictationDaemon:
             except Empty:
                 continue
 
-            # Сегмент с другой машины (бэкенд "remote" там): распознать и
-            # вернуть текст, ничего не печатая здесь
-            if isinstance(segment, RemoteRequest):
-                self._recognize_remote(segment)
-                continue
-
             # Сегмент отменённой сессии — выбрасываем, не печатая.
             # Маркер конца (segment is None) пропускаем сюда всегда: именно он
             # возвращает демон в IDLE, и потерять его нельзя.
@@ -693,9 +647,6 @@ class DictationDaemon:
                     self._pending_seconds -= len(segment) / (sample_rate * 2)
                 continue
 
-            # Отдельный метод, а не тело цикла: его локальная ссылка на бэкенд
-            # умирает на возврате. Иначе цикл держал бы её, ожидая очередь, и
-            # после reload старая модель жила бы в видеопамяти.
             # Любое исключение ловится здесь: умерший воркер не обработает
             # следующий маркер конца, и демон навсегда застрянет в FINALIZING.
             try:
@@ -708,75 +659,12 @@ class DictationDaemon:
                 if segment is None:
                     self._end_session_state()
 
-    def _recognize_remote(self, request: "RemoteRequest") -> None:
-        """Распознать сегмент удалённого клиента (16 кГц) и вернуть ему текст.
-
-        Здесь, в воркере, как и локальные сегменты: модель одна и не
-        потокобезопасна. Потоковый бэкенд держит состояние фразы локальной
-        сессии — его делить нельзя, такому клиенту отказываем.
-        """
-        from .remote_server import SAMPLE_RATE
-        try:
-            if request.cancelled:
-                return
-            if not self._running:
-                # Остановка: очередь дорабатывается ради своих сегментов,
-                # чужие ей не нужны
-                request.error = "сервер останавливается"
-                return
-            backend = self.backend
-            if backend is None:
-                request.error = "на сервере не загружен бэкенд"
-                return
-            if backend.supports_streaming:
-                request.error = (f"бэкенд сервера {self.backend_name} потоковый, "
-                                 "удалённое распознавание его не поддерживает")
-                return
-            audio = request.audio
-            if backend.sample_rate != SAMPLE_RATE:
-                # Свой ресемплер на сегмент: сегменты клиентов независимы, и
-                # история фильтра локальной сессии не должна в них попасть
-                from _nerd_dictation_native import audio as native_audio
-                audio = native_audio.Resampler(SAMPLE_RATE, backend.sample_rate).process(audio)
-            seconds = len(request.audio) / (SAMPLE_RATE * 2)
-            started = time.monotonic()
-            try:
-                backend.feed(audio)
-                request.text = backend.finalize().text or ""
-            except Exception as e:
-                # finalize не чистит буфер на ошибке: следующий сегмент,
-                # свой или чужой, не должен его унаследовать
-                backend.reset()
-                request.error = f"ошибка распознавания: {e}"
-                return
-            print(
-                f"[recognizer] удалённый сегмент {seconds:.2f}s ({request.peer}) "
-                f"за {time.monotonic() - started:.2f}s",
-                file=sys.stderr,
-            )
-        finally:
-            request.done.set()
-
     def _finish_session(self, session_id: int) -> None:
-        """Маркер конца сессии: дожать остаток, сбросить состояние, вернуть IDLE."""
-        backend = self.backend
-        try:
-            # Потоковый бэкенд держит недоговорённую фразу — дожимаем её,
-            # если сессию не отменили
-            if backend.supports_streaming and session_id != self._discarded_session:
-                self._print_recognized(backend.finalize().text, session_id)
-            backend.reset()
-        finally:
-            # Ссылка на бэкенд должна умереть ДО IDLE: в IDLE разрешён reload,
-            # и новая модель не должна грузиться, пока жива старая (GPU 2 ГБ)
-            del backend
-            self._end_session_state()
+        """Маркер конца сессии: все её сегменты напечатаны, вернуть IDLE."""
+        self._end_session_state()
 
     def _end_session_state(self) -> None:
         """Сбросить состояние сессии и вернуть IDLE. Выполняется при любом исходе."""
-        # История фильтра ресемплера не должна перетекать в следующую сессию
-        if self._resampler is not None:
-            self._resampler.reset()
         with self._pending_lock:
             self._pending_seconds = 0.0
         # Под той же блокировкой, что begin/end/cancel/reload: иначе end,
@@ -789,17 +677,12 @@ class DictationDaemon:
             self.state = DaemonState.IDLE
 
     def _recognize(self, segment: bytes, sample_rate: int, session_id: int) -> None:
-        """Подать сегмент (буферный режим) или чанк (потоковый) в бэкенд."""
-        backend = self.backend
-        streaming = backend.supports_streaming
-
-        # Бэкенд может ждать другую частоту (t-one — 8 кГц), а VAD, wake word
-        # и кольцевой буфер живут на частоте записи: конвертируем перед feed
-        if backend.sample_rate != sample_rate:
-            if self._resampler is None or self._resampler.out_rate() != backend.sample_rate:
-                from _nerd_dictation_native import audio as native_audio
-                self._resampler = native_audio.Resampler(sample_rate, backend.sample_rate)
-            audio = self._resampler.process(segment)
+        """Отправить сегмент серверу и напечатать его текст."""
+        # Протокол везёт 16 кГц; запись на другой частоте — свой ресемплер
+        # на сегмент (сегменты независимы, историю фильтра не переносим)
+        if sample_rate != ASR_SAMPLE_RATE:
+            from _nerd_dictation_native import audio as native_audio
+            audio = native_audio.Resampler(sample_rate, ASR_SAMPLE_RATE).process(segment)
         else:
             audio = segment
 
@@ -807,30 +690,19 @@ class DictationDaemon:
         started = time.monotonic()
         text = ""
         try:
-            backend.feed(audio)
-            if streaming:
-                # Промежуточный текст ещё может измениться — печатаем
-                # только завершённую фразу
-                result = backend.result()
-                if result.is_final:
-                    text = result.text
-            else:
-                text = backend.finalize().text
-        except Exception as e:
-            print(f"[recognizer] ошибка распознавания: {e}", file=sys.stderr)
+            text = self._asr.recognize(audio)
+        except RuntimeError as e:
+            print(f"[asr] {e} - ничего не напечатано", file=sys.stderr)
         elapsed = time.monotonic() - started
 
         with self._pending_lock:
             self._pending_seconds -= seconds
 
-        # Потоковый режим идёт порциями по 0.25 s: пишем только медленные,
-        # иначе журнал утонет; сегменты VAD — всегда
-        if not streaming or elapsed > seconds:
-            print(
-                f"[recognizer] {'чанк' if streaming else 'сегмент'} {seconds:.2f}s "
-                f"распознан за {elapsed:.2f}s (RTF {elapsed / seconds:.2f})",
-                file=sys.stderr,
-            )
+        print(
+            f"[recognizer] сегмент {seconds:.2f}s распознан за {elapsed:.2f}s "
+            f"(RTF {elapsed / seconds:.2f})",
+            file=sys.stderr,
+        )
 
         if self._debug_dir:
             path = self._debug_segment_paths.pop(id(segment), None)
@@ -863,8 +735,11 @@ class DictationDaemon:
             if self.state == DaemonState.FINALIZING:
                 return {"status": "error", "message": "Идёт финализация предыдущей диктовки"}
 
-            if not self.backend:
-                return {"status": "error", "message": "Бэкенд не загружен"}
+            # Без сервера записывать незачем: напечатать будет нечего.
+            # Ответ виден сразу (tty-i3-keys показывает его в нижней полосе)
+            connected, info = self._asr.status()
+            if not connected:
+                return {"status": "error", "message": f"Сервер недоступен: {info}"}
 
             # Новая сессия начинается только из IDLE, поэтому живая сессия
             # всегда ровно одна, и её маркер конца всегда совпадает с _session_id
@@ -941,10 +816,14 @@ class DictationDaemon:
 
     def get_status(self) -> dict:
         """Получить статус daemon'а."""
+        connected, info = self._asr.status()
         return {
             "status": "ok",
             "state": self.state.value,
-            "backend": self.backend_name,
+            "server": self._asr.label,
+            "connected": connected,
+            # бэкенд сервера, если подключены, иначе причина
+            "backend" if connected else "error": info,
             "pid": os.getpid(),
         }
 
@@ -959,7 +838,6 @@ class DictationDaemon:
             "cancel": self.cancel_dictation,
             "toggle": self.toggle_dictation,
             "status": self.get_status,
-            "reload": lambda: self._reload_backend(cmd.get("backend")),
             "shutdown": self._shutdown,
         }
 
@@ -969,24 +847,6 @@ class DictationDaemon:
         result = handlers[action]()
         print(f"  -> {result.get('status')}: {result.get('message', result.get('state', ''))}", file=sys.stderr)
         return result
-
-    def _reload_backend(self, backend_name: str = None) -> dict:
-        """Перезагрузить бэкенд."""
-        # Под блокировкой жизненного цикла: begin зовут и поток кнопки, и
-        # wake word. Без неё begin мог проскочить между проверкой IDLE и
-        # выгрузкой, и сессия пошла бы на бэкенде, которого уже нет.
-        with self._lifecycle_lock:
-            # В FINALIZING бэкендом владеет воркер — обнулять его нельзя
-            if self.state != DaemonState.IDLE:
-                return {"status": "error", "message": "Дождитесь окончания диктовки перед перезагрузкой"}
-
-            try:
-                self.backend = None
-                self.backend_name = None
-                self.load_backend(backend_name)
-                return {"status": "ok", "message": f"Бэкенд {self.backend_name} перезагружен"}
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
 
     def _shutdown(self) -> dict:
         """Остановить daemon."""
@@ -1013,17 +873,11 @@ class DictationDaemon:
         # Запустить постоянный аудио-слушатель
         self._start_audio_listener()
 
+        # Связь с сервером распознавания (переподключается сама)
+        self._asr.start()
+
         # Запустить воркер распознавания
         self._start_recognizer()
-
-        # Принимать сегменты с других машин (их бэкенд "remote"), если сами
-        # распознаём локально
-        if self.backend_name != "remote":
-            self._asr_server = RemoteASRServer(
-                lambda request: self._segment_queue.put((None, request)),
-                lambda: self.backend_name or "",
-            )
-            self._asr_server.start()
 
         # Запустить wake word detection если включено
         self._start_wake_word_detection()
@@ -1042,8 +896,6 @@ class DictationDaemon:
                     continue
         finally:
             server.close()
-            if self._asr_server:
-                self._asr_server.stop()
             # Порядок важен: сперва глушим производителя сегментов, иначе
             # воркер сливает очередь, в которую продолжают класть, и выход
             # по опустевшей очереди становится гонкой.
@@ -1060,6 +912,7 @@ class DictationDaemon:
                         f"{self._segment_queue.qsize()} сегментов",
                         file=sys.stderr,
                     )
+            self._asr.stop()
             SOCKET_PATH.unlink(missing_ok=True)
             PID_FILE.unlink(missing_ok=True)
             print("Daemon остановлен", file=sys.stderr)
@@ -1127,7 +980,7 @@ class DaemonClient:
 # ============================================================================
 
 def _daemon_command(action: str) -> None:
-    """Отправить команду демону. Без демона диктовки нет: модель держит он."""
+    """Отправить команду демону (клиенту диктовки)."""
     if not DaemonClient.is_running():
         print("Демон не запущен: systemctl --user start nerd-dictation", file=sys.stderr)
         sys.exit(1)
@@ -1232,29 +1085,28 @@ def _run_daemon(config: dict) -> None:
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
-    daemon.load_backend()
     daemon.run()
 
 
 def main():
     """Точка входа для nerd-dictation-ex."""
     parser = argparse.ArgumentParser(
-        description="nerd-dictation-ex — диктовка с подключаемыми бэкендами ASR",
+        description="nerd-dictation — диктовка: клиент (daemon) и сервер распознавания (server)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
-  # Запуск через systemd (рекомендуется):
-  systemctl --user start nerd-dictation-ex   # Запустить daemon
-  nerd-dictation-ex toggle                   # Переключить диктовку
-
-  # Без daemon (медленный старт):
-  nerd-dictation-ex begin --no-daemon        # Загружать модель каждый раз
+  systemctl --user start nerd-dictation-server   # сервер (машина с моделью)
+  systemctl --user start nerd-dictation          # клиент диктовки
+  nerd-dictation toggle                          # Переключить диктовку
         """
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # daemon (для systemd)
-    subparsers.add_parser("daemon", help="Запустить daemon (для systemd)")
+    subparsers.add_parser("daemon", help="Клиент диктовки (для systemd: nerd-dictation)")
+
+    # server (для systemd)
+    subparsers.add_parser("server", help="Сервер распознавания (для systemd: nerd-dictation-server)")
 
     # begin
     subparsers.add_parser("begin", help="Начать диктовку")
@@ -1269,7 +1121,7 @@ def main():
     subparsers.add_parser("toggle", help="Переключить диктовку (begin/end)")
 
     # list-backends
-    subparsers.add_parser("list-backends", help="Показать доступные бэкенды")
+    subparsers.add_parser("list-backends", help="Бэкенды, которые может загрузить сервер")
 
     # test-postprocess (для отладки)
     subparsers.add_parser("test-postprocess", help="Тест постобработки текста")
@@ -1284,7 +1136,7 @@ def main():
              "опционально распознать сегменты")
     replay.add_argument("wav")
     replay.add_argument("--recognize", action="store_true",
-                        help="распознать каждый сегмент бэкендом из конфига")
+                        help="распознать каждый сегмент сервером из конфига ([server] host)")
     replay.add_argument("--out", help="каталог для WAV сегментов (как [debug] audio_dir)")
 
     args = parser.parse_args()
@@ -1292,6 +1144,9 @@ def main():
 
     if args.command == "daemon":
         _run_daemon(config)
+    elif args.command == "server":
+        from .asr import run_server
+        run_server(config)
     elif args.command == "begin":
         cmd_begin(args, config)
     elif args.command == "end":
@@ -1335,13 +1190,22 @@ def cmd_replay_vad(args, config: dict) -> None:
     segments += segmenter.flush()
     print(f"{len(segments)} segments in {out}", file=sys.stderr)
     if args.recognize and segments:
-        daemon = DictationDaemon(config)
-        daemon.load_backend()
-        if daemon.backend.sample_rate != rate:
-            sys.exit(f"бэкенд ждёт {daemon.backend.sample_rate} Гц, запись {rate} Гц")
-        for segment, path in segments:
-            daemon.backend.feed(segment)
-            print(f"{path}: {daemon.backend.finalize().text!r}", file=sys.stderr)
+        if rate != ASR_SAMPLE_RATE:
+            sys.exit(f"сервер ждёт {ASR_SAMPLE_RATE} Гц, запись {rate} Гц")
+        client = AsrClient(config.get("server", {}).get("host", "local"))
+        client.start()
+        deadline = time.monotonic() + 30
+        while not client.status()[0] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        try:
+            for segment, path in segments:
+                try:
+                    text = client.recognize(segment)
+                except RuntimeError as e:
+                    text = f"<{e}>"
+                print(f"{path}: {text!r}", file=sys.stderr)
+        finally:
+            client.stop()
 
 
 def cmd_test_audio():

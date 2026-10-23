@@ -1,7 +1,9 @@
 [Unit]
-Description=nerd-dictation daemon
-Documentation=https://github.com/marcusmae/nerd-dictation
-After=pipewire.service pipewire-pulse.service sound.target graphical-session-pre.target
+Description=nerd-dictation client: recording, VAD, typing (recognition: [server] host)
+Documentation=https://github.com/nerd-voice-interface/nerd-dictation/blob/master/docs/client-server.md
+# With [server] host = "local" the server runs here; the client reconnects
+# by itself, so this is ordering only, not a dependency
+After=nerd-dictation-server.service pipewire.service pipewire-pulse.service sound.target graphical-session-pre.target
 Wants=pipewire.service pipewire-pulse.service
 
 [Service]
@@ -19,8 +21,9 @@ Environment="LD_LIBRARY_PATH=@ABS_INSTALL_PREFIX@/lib:@ABS_INSTALL_PREFIX@/lib/r
 
 # Security. No filesystem namespacing (PrivateTmp, ProtectSystem,
 # ProtectHome, ReadWritePaths): in a user service it needs a user namespace,
-# where root's files appear owned by "nobody", and ssh - which the "remote"
-# backend runs - then refuses /etc/ssh/ssh_config.d ("Bad owner").
+# where root's files appear owned by "nobody", and ssh - which the client
+# runs to reach a remote server - then refuses /etc/ssh/ssh_config.d
+# ("Bad owner").
 NoNewPrivileges=true
 
 # Resource limits

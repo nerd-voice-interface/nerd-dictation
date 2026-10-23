@@ -2,23 +2,22 @@
 nerd-dictation-ex backends
 
 Бэкенды распознавания — нативные C++ библиотеки (/usr/lib/libnerd-dictation-*.so),
-загружаемые через встроенный модуль _nerd_dictation_native:
+которые загружает сервер (nerd-dictation server, [server] backend) через
+встроенный модуль _nerd_dictation_native:
     gigaam-native  - GigaAM (оффлайн, распознаёт сегмент целиком)
     t-one-native   - T-One (потоковый)
     dummy-native   - тестовый бэкенд
-    remote         - распознаёт демон другой машины через ssh ([remote] host)
 """
 
 from typing import Dict, Type
 
 from .native import (NativeBackend, GigaAMNativeBackend, TOneNativeBackend,
-                     DummyNativeBackend, RemoteNativeBackend)
+                     DummyNativeBackend)
 
 _BACKENDS: Dict[str, Type[NativeBackend]] = {
     "gigaam-native": GigaAMNativeBackend,
     "t-one-native": TOneNativeBackend,
     "dummy-native": DummyNativeBackend,
-    "remote": RemoteNativeBackend,
 }
 
 
