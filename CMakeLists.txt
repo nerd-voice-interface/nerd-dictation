@@ -97,9 +97,13 @@ else()
 endif()
 
 # ONNX Runtime (for Silero VAD)
+# The directory holding onnxruntime_cxx_api.h: our onnxruntime-gpu-sm61 keeps
+# upstream's tree (onnxruntime/core/session/), Arch's onnxruntime-cpu a flat
+# one (onnxruntime/)
 find_path(ONNXRUNTIME_INCLUDE_DIR
-    NAMES onnxruntime/core/session/onnxruntime_cxx_api.h
+    NAMES onnxruntime_cxx_api.h
     PATHS /usr/include /usr/local/include
+    PATH_SUFFIXES onnxruntime/core/session onnxruntime
 )
 find_library(ONNXRUNTIME_LIBRARY
     NAMES onnxruntime

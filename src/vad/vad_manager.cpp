@@ -3,7 +3,7 @@
  */
 
 #include "nerd_dictation/vad/vad_manager.hpp"
-#include <onnxruntime/core/session/onnxruntime_cxx_api.h>
+#include <onnxruntime_cxx_api.h>
 #include <spdlog/spdlog.h>
 #include <cstdlib>
 #include <filesystem>
