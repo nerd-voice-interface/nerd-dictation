@@ -447,8 +447,14 @@ class _Link:
         if self.proc and self.proc.stderr:
             time.sleep(0.05)        # let the drain thread catch a last message
         lines = [l for l in self._stderr.decode(errors="replace").splitlines()
-                 # ssh's advisory, printed on every connection to some hosts
-                 if "post-quantum" not in l and "upgrade.html" not in l]
+                 # OpenSSH's advisory about a server without post-quantum key
+                 # exchange (oracle's sshd), printed on every connection:
+                 # "** This session may be vulnerable to "store now, decrypt
+                 # later" attacks. ... See https://openssh.com/pq.html"
+                 if not (l.lstrip().startswith("**")
+                         and ("pq.html" in l or "post-quantum" in l
+                              or "store now, decrypt later" in l
+                              or "server may need to be upgraded" in l))]
         return " ".join(l.strip() for l in lines if l.strip())
 
     def exited(self) -> bool:
