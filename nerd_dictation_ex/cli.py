@@ -104,6 +104,11 @@ class DictationDaemon:
 
     def __init__(self, config: dict):
         self.config = config
+        # [debug] audio_dir: log VAD levels/probabilities and segment cuts,
+        # save every segment as a WAV there with its recognized text
+        debug_dir = config.get("debug", {}).get("audio_dir")
+        self._debug_dir = os.path.expanduser(debug_dir) if debug_dir else None
+        self._debug_segment_paths: dict = {}
         self.state = DaemonState.IDLE
         self.backend = None
         self.backend_name = None
@@ -548,11 +553,6 @@ class DictationDaemon:
                 play_execute()
                 press_keys(action.keys, self.config)
 
-    # VAD параметры для offline бэкендов (как в оригинальном GigaAM backend)
-    VAD_THRESHOLD = 0.5  # Порог вероятности речи
-    MIN_SILENCE_MS = 500  # Минимальная пауза для сегментации (мс)
-    MIN_SPEECH_MS = 100  # Минимальная длина речи (мс)
-    MAX_BUFFER_SECONDS = 25  # Максимум аудио в буфере
     LAG_WARN_SECONDS = 30  # Порог предупреждения об отставании распознавания
 
     def _dictation_loop(self) -> None:
@@ -607,123 +607,48 @@ class DictationDaemon:
         """
         Цикл диктовки для offline бэкендов с VAD-сегментацией.
 
-        Использует нативный Silero VAD (ONNX) для определения пауз в речи.
-        Распознаёт накопленный буфер при обнаружении паузы.
+        Нарезку делает VadSegmenter (segmenter.py) на нативном Silero VAD:
+        распознаётся накопленный буфер, когда после речи наступает пауза.
         """
-        import numpy as np
+        from .segmenter import VadSegmenter
 
-        # Получаем ссылку на VAD модуль (должен быть инициализирован от wake word)
         vad = getattr(self, '_vad_module', None)
         if vad is None:
             from . import vad as vad_module
             vad = vad_module
             self._vad_module = vad
 
-        # Инициализируем VAD если ещё не инициализирован
         if not vad.is_initialized():
             print("[daemon] Инициализирую нативный VAD для сегментации...", file=sys.stderr)
-            if not vad.init(sample_rate=sample_rate, threshold=self.VAD_THRESHOLD):
+            if not vad.init(sample_rate=sample_rate, threshold=VadSegmenter.VAD_THRESHOLD):
                 print(f"[daemon] Ошибка инициализации VAD: {vad.get_error()}", file=sys.stderr)
                 return
 
         # Сбрасываем состояние VAD в начале каждой сессии диктовки
-        # Это безопасно - C++ VADManager корректно обрабатывает reset
         vad.reset_states()
 
-        # VAD состояние
-        vad_chunk_samples = vad.get_chunk_size()  # 512 для 16kHz, 256 для 8kHz
-        vad_buffer = np.array([], dtype=np.int16)
-        silence_samples = 0
-        speech_samples = 0
-        in_speech = False
-
-        # Аудио буфер для распознавания
-        audio_buffer = bytearray()
-        max_buffer_bytes = self.MAX_BUFFER_SECONDS * sample_rate * 2
-
-        # Пороги в samples
-        min_silence = int(self.MIN_SILENCE_MS * sample_rate / 1000)
-        min_speech = int(self.MIN_SPEECH_MS * sample_rate / 1000)
-
-        def reset_vad_state():
-            nonlocal silence_samples, speech_samples, in_speech, vad_buffer
-            silence_samples = 0
-            speech_samples = 0
-            in_speech = False
-            vad_buffer = np.array([], dtype=np.int16)
-            # НЕ вызываем reset_states() - это вызывает heap corruption в torch
-            # Silero VAD корректно обрабатывает непрерывный поток без сброса
-
-        # Минимум 0.5 секунды аудио для распознавания
-        min_audio_bytes = int(0.5 * sample_rate * 2)
-
         session_id = self._session_id
+        segmenter = VadSegmenter(vad, sample_rate, debug_dir=self._debug_dir,
+                                 tag=f"s{session_id}-{time.strftime('%H%M%S')}")
 
-        def enqueue_segment():
-            """Отдать накопленный сегмент воркеру. Бэкенд здесь НЕ вызывается:
-            распознавание не должно останавливать потребление аудио."""
-            nonlocal audio_buffer
-            if len(audio_buffer) < min_audio_bytes:
-                audio_buffer.clear()
-                return
-
-            segment = bytes(audio_buffer)
-            audio_buffer.clear()
-            self._enqueue_audio(session_id, segment, sample_rate)
+        def enqueue(segments):
+            for segment, label in segments:
+                if self._debug_dir:
+                    self._debug_segment_paths[id(segment)] = label
+                self._enqueue_audio(session_id, segment, sample_rate)
 
         try:
             for chunk in self._audio_stream():
                 if self._stop_dictation.is_set():
                     break
-
-                if not chunk:
-                    continue
-
-                # Добавляем в аудио буфер
-                audio_buffer.extend(chunk)
-
-                # Конвертируем для VAD
-                audio_np = np.frombuffer(chunk, dtype=np.int16)
-                vad_buffer = np.concatenate([vad_buffer, audio_np])
-
-                # Обрабатываем VAD чанками
-                while len(vad_buffer) >= vad_chunk_samples:
-                    vad_chunk = vad_buffer[:vad_chunk_samples]
-                    vad_buffer = vad_buffer[vad_chunk_samples:]
-
-                    # Вызываем нативный VAD (принимает int16 bytes)
-                    vad_result = vad.process_chunk(vad_chunk.tobytes())
-                    prob = vad_result.speech_probability
-
-                    if prob >= self.VAD_THRESHOLD:
-                        speech_samples += vad_chunk_samples
-                        silence_samples = 0
-                        in_speech = True
-                    else:
-                        silence_samples += vad_chunk_samples
-
-                # Распознаём при паузе после речи или переполнении буфера
-                should_transcribe = (
-                    (in_speech and silence_samples >= min_silence and speech_samples >= min_speech) or
-                    len(audio_buffer) >= max_buffer_bytes
-                )
-
-                if should_transcribe:
-                    enqueue_segment()
-                    reset_vad_state()
-
+                if chunk:
+                    enqueue(segmenter.feed(chunk))
             # Хвост: недособранный буфер тоже должен быть распознан
-            enqueue_segment()
-
+            enqueue(segmenter.flush())
         except Exception as e:
             print(f"Ошибка диктовки (buffered): {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
-        finally:
-            # Очищаем состояние VAD (только если он был использован).
-            # Маркер конца сессии ставит _dictation_loop — он гарантирован
-            # даже на путях, которые сюда не доходят.
-            reset_vad_state()
 
     def _start_recognizer(self) -> None:
         """Запустить воркер распознавания."""
@@ -906,6 +831,13 @@ class DictationDaemon:
                 f"распознан за {elapsed:.2f}s (RTF {elapsed / seconds:.2f})",
                 file=sys.stderr,
             )
+
+        if self._debug_dir:
+            path = self._debug_segment_paths.pop(id(segment), None)
+            print(f"[recognizer] текст сегмента {path or ''}: {text!r}", file=sys.stderr)
+            if path:
+                with open(path[:-4] + ".txt", "w") as f:
+                    f.write((text or "") + "\n")
 
         self._print_recognized(text, session_id)
 
@@ -1237,7 +1169,11 @@ def _get_audio_command(config: dict) -> list:
     sample_rate = config.get("audio", {}).get("sample_rate", 16000)
 
     commands = {
-        "pw-cat": ["pw-cat", "--record", "--format", "s16",
+        # --raw: without it pw-cat wraps stdout in a Sun .snd container,
+        # in its native byte order up to PipeWire 1.6.9 and big-endian
+        # since 1.6.10, where reading it as s16le turns speech into
+        # full-scale noise (VAD sees no speech, GigaAM returns nothing)
+        "pw-cat": ["pw-cat", "--record", "--raw", "--format", "s16",
                    "--rate", str(sample_rate), "--channels", "1", "-"],
         "parec": ["parec", f"--format=s16ne", f"--rate={sample_rate}",
                   "--channels=1", "--raw"],
@@ -1341,6 +1277,16 @@ def main():
     # test-audio (для отладки)
     subparsers.add_parser("test-audio", help="Тест шумоподавления аудио")
 
+    # replay-vad: the daemon's segmentation on a recording (debugging)
+    replay = subparsers.add_parser(
+        "replay-vad",
+        help="Прогнать WAV (16-bit mono) через VAD-нарезку демона, "
+             "опционально распознать сегменты")
+    replay.add_argument("wav")
+    replay.add_argument("--recognize", action="store_true",
+                        help="распознать каждый сегмент бэкендом из конфига")
+    replay.add_argument("--out", help="каталог для WAV сегментов (как [debug] audio_dir)")
+
     args = parser.parse_args()
     config = load_config()
 
@@ -1360,6 +1306,42 @@ def main():
         cmd_test_postprocess()
     elif args.command == "test-audio":
         cmd_test_audio()
+    elif args.command == "replay-vad":
+        cmd_replay_vad(args, config)
+
+
+def cmd_replay_vad(args, config: dict) -> None:
+    """Feed a recording to the daemon's VadSegmenter in microphone-sized
+    chunks, with the debug trace on, and optionally recognize the segments."""
+    import tempfile
+    import wave
+    from . import vad
+    from .segmenter import VadSegmenter
+
+    with wave.open(args.wav) as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1:
+            sys.exit("нужен WAV 16-bit mono")
+        rate = w.getframerate()
+        audio = w.readframes(w.getnframes())
+    if not vad.init(sample_rate=rate, threshold=VadSegmenter.VAD_THRESHOLD):
+        sys.exit(f"VAD: {vad.get_error()}")
+    vad.reset_states()
+    out = args.out or tempfile.mkdtemp(prefix="replay-vad-")
+    segmenter = VadSegmenter(vad, rate, debug_dir=out, tag="replay")
+    chunk = config.get("audio", {}).get("chunk_size", 8000)
+    segments = []
+    for i in range(0, len(audio), chunk):
+        segments += segmenter.feed(audio[i:i + chunk])
+    segments += segmenter.flush()
+    print(f"{len(segments)} segments in {out}", file=sys.stderr)
+    if args.recognize and segments:
+        daemon = DictationDaemon(config)
+        daemon.load_backend()
+        if daemon.backend.sample_rate != rate:
+            sys.exit(f"бэкенд ждёт {daemon.backend.sample_rate} Гц, запись {rate} Гц")
+        for segment, path in segments:
+            daemon.backend.feed(segment)
+            print(f"{path}: {daemon.backend.finalize().text!r}", file=sys.stderr)
 
 
 def cmd_test_audio():

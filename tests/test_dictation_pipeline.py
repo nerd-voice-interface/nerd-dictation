@@ -161,6 +161,9 @@ sys.modules.setdefault("_nerd_dictation_native.audio", _native_audio)
 
 from nerd_dictation_ex import cli  # noqa: E402
 
+# Some scenarios replace it with a fake producer; R16 checks the real one
+_real_get_audio_command = cli._get_audio_command
+
 # --- Параметры симуляции ----------------------------------------------------
 
 SR = 16000
@@ -732,6 +735,17 @@ def main():
             ok = False
     else:
         print("R14-R15 SKIP: в этой версии нет")
+
+    # R16: pw-cat must emit raw PCM. Without --raw it writes a Sun .snd
+    # container to stdout - big-endian since PipeWire 1.6.10 - and the
+    # daemon, reading s16le, got full-scale noise instead of speech.
+    cmd = _real_get_audio_command({"audio": {"source": "pw-cat", "sample_rate": 16000,
+                                             "bt_fallback": False}})
+    if "--raw" in cmd and cmd[-1] == "-":
+        print("R16 PASS: pw-cat пишет сырой PCM (--raw)")
+    else:
+        print(f"R16 FAIL: команда записи без --raw: {cmd}")
+        ok = False
 
     print("ALL PASS" if ok else "FAILED")
     return 0 if ok else 1

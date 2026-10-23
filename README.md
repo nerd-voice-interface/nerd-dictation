@@ -204,6 +204,17 @@ EOF
   - `audio.sample_rate` — Sample rate in Hz (typically 16000)
   - `audio.chunk_size` — Audio chunk size in samples
 
+- **Debugging segmentation and recognition** (off by default):
+  - `debug.audio_dir` — when set (e.g. `"~/.cache/nerd-dictation/debug"`),
+    the daemon logs the audio level and the highest Silero speech
+    probability every 0.25 s (`[vad] ...`), every segment cut and its reason
+    (`pause`, `max-length`, `stop`), saves each segment there as a WAV and
+    logs its recognized text, empty results included (written next to the
+    WAV as `.txt`)
+  - `nerd-dictation replay-vad FILE.wav [--recognize] [--out DIR]` runs a
+    16-bit mono recording through the same segmentation, with the same
+    trace, and optionally recognizes the segments with the configured backend
+
 - **Wake word detection:**
   - `wake_word.enabled` — Enable/disable wake word detection
   - `wake_word.word` — Wake word phrase (default: "запись")
