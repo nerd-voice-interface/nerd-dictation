@@ -17,12 +17,11 @@ Environment="XDG_RUNTIME_DIR=%t"
 Environment="DISPLAY=:0"
 Environment="LD_LIBRARY_PATH=@ABS_INSTALL_PREFIX@/lib:@ABS_INSTALL_PREFIX@/lib/res_embed"
 
-# Security
+# Security. No filesystem namespacing (PrivateTmp, ProtectSystem,
+# ProtectHome, ReadWritePaths): in a user service it needs a user namespace,
+# where root's files appear owned by "nobody", and ssh - which the "remote"
+# backend runs - then refuses /etc/ssh/ssh_config.d ("Bad owner").
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.config/nerd-dictation %h/.local/share/vosk %h/.local/share/nerd-dictation %h/.local/share/jamspell %t
 
 # Resource limits
 MemoryMax=2G
