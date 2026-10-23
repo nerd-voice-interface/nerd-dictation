@@ -6,16 +6,19 @@ nerd-dictation-ex backends
     gigaam-native  - GigaAM (оффлайн, распознаёт сегмент целиком)
     t-one-native   - T-One (потоковый)
     dummy-native   - тестовый бэкенд
+    remote         - распознаёт демон другой машины через ssh ([remote] host)
 """
 
 from typing import Dict, Type
 
-from .native import NativeBackend, GigaAMNativeBackend, TOneNativeBackend, DummyNativeBackend
+from .native import (NativeBackend, GigaAMNativeBackend, TOneNativeBackend,
+                     DummyNativeBackend, RemoteNativeBackend)
 
 _BACKENDS: Dict[str, Type[NativeBackend]] = {
     "gigaam-native": GigaAMNativeBackend,
     "t-one-native": TOneNativeBackend,
     "dummy-native": DummyNativeBackend,
+    "remote": RemoteNativeBackend,
 }
 
 

@@ -32,6 +32,8 @@ from pathlib import Path
 from collections import deque
 from typing import Optional, Generator
 
+from .remote_server import RemoteASRServer, RemoteRequest
+
 # Пути
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 SOCKET_PATH = RUNTIME_DIR / "nerd-dictation-ex.sock"
@@ -105,6 +107,7 @@ class DictationDaemon:
         self.state = DaemonState.IDLE
         self.backend = None
         self.backend_name = None
+        self._asr_server = None
         self._audio_proc: Optional[subprocess.Popen] = None
         self._running = True
         self._dictation_thread: Optional[threading.Thread] = None
@@ -204,7 +207,15 @@ class DictationDaemon:
 
         # Модель встроена в .so: загрузка бэкенда и есть загрузка модели
         print(f"Загрузка бэкенда: {backend_name}...", file=sys.stderr)
-        self.backend = get_backend(backend_name)
+        if backend_name == "remote":
+            # Распознаёт другая машина (её демон, см. remote_server.py);
+            # host — алиас ssh, по которому до неё добраться
+            host = self.config.get("remote", {}).get("host")
+            if not host:
+                raise ValueError('backend "remote" требует [remote] host = "<ssh-алиас>" в конфиге')
+            self.backend = get_backend(backend_name, host=host)
+        else:
+            self.backend = get_backend(backend_name)
         self.backend_name = backend_name
 
         print(f"Бэкенд {backend_name} загружен и готов", file=sys.stderr)
@@ -743,6 +754,12 @@ class DictationDaemon:
             except Empty:
                 continue
 
+            # Сегмент с другой машины (бэкенд "remote" там): распознать и
+            # вернуть текст, ничего не печатая здесь
+            if isinstance(segment, RemoteRequest):
+                self._recognize_remote(segment)
+                continue
+
             # Сегмент отменённой сессии — выбрасываем, не печатая.
             # Маркер конца (segment is None) пропускаем сюда всегда: именно он
             # возвращает демон в IDLE, и потерять его нельзя.
@@ -765,6 +782,55 @@ class DictationDaemon:
                 print(f"[recognizer] ошибка: {type(e).__name__}: {e}", file=sys.stderr)
                 if segment is None:
                     self._end_session_state()
+
+    def _recognize_remote(self, request: "RemoteRequest") -> None:
+        """Распознать сегмент удалённого клиента (16 кГц) и вернуть ему текст.
+
+        Здесь, в воркере, как и локальные сегменты: модель одна и не
+        потокобезопасна. Потоковый бэкенд держит состояние фразы локальной
+        сессии — его делить нельзя, такому клиенту отказываем.
+        """
+        from .remote_server import SAMPLE_RATE
+        try:
+            if request.cancelled:
+                return
+            if not self._running:
+                # Остановка: очередь дорабатывается ради своих сегментов,
+                # чужие ей не нужны
+                request.error = "сервер останавливается"
+                return
+            backend = self.backend
+            if backend is None:
+                request.error = "на сервере не загружен бэкенд"
+                return
+            if backend.supports_streaming:
+                request.error = (f"бэкенд сервера {self.backend_name} потоковый, "
+                                 "удалённое распознавание его не поддерживает")
+                return
+            audio = request.audio
+            if backend.sample_rate != SAMPLE_RATE:
+                # Свой ресемплер на сегмент: сегменты клиентов независимы, и
+                # история фильтра локальной сессии не должна в них попасть
+                from _nerd_dictation_native import audio as native_audio
+                audio = native_audio.Resampler(SAMPLE_RATE, backend.sample_rate).process(audio)
+            seconds = len(request.audio) / (SAMPLE_RATE * 2)
+            started = time.monotonic()
+            try:
+                backend.feed(audio)
+                request.text = backend.finalize().text or ""
+            except Exception as e:
+                # finalize не чистит буфер на ошибке: следующий сегмент,
+                # свой или чужой, не должен его унаследовать
+                backend.reset()
+                request.error = f"ошибка распознавания: {e}"
+                return
+            print(
+                f"[recognizer] удалённый сегмент {seconds:.2f}s ({request.peer}) "
+                f"за {time.monotonic() - started:.2f}s",
+                file=sys.stderr,
+            )
+        finally:
+            request.done.set()
 
     def _finish_session(self, session_id: int) -> None:
         """Маркер конца сессии: дожать остаток, сбросить состояние, вернуть IDLE."""
@@ -1018,6 +1084,15 @@ class DictationDaemon:
         # Запустить воркер распознавания
         self._start_recognizer()
 
+        # Принимать сегменты с других машин (их бэкенд "remote"), если сами
+        # распознаём локально
+        if self.backend_name != "remote":
+            self._asr_server = RemoteASRServer(
+                lambda request: self._segment_queue.put((None, request)),
+                lambda: self.backend_name or "",
+            )
+            self._asr_server.start()
+
         # Запустить wake word detection если включено
         self._start_wake_word_detection()
 
@@ -1035,6 +1110,8 @@ class DictationDaemon:
                     continue
         finally:
             server.close()
+            if self._asr_server:
+                self._asr_server.stop()
             # Порядок важен: сперва глушим производителя сегментов, иначе
             # воркер сливает очередь, в которую продолжают класть, и выход
             # по опустевшей очереди становится гонкой.
