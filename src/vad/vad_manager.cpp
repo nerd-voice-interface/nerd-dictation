@@ -277,29 +277,29 @@ std::string find_vad_model() {
     // Search paths in order of priority
     std::vector<std::string> search_paths;
 
-    // 1. User cache (torch hub download location)
-    if (const char* home = std::getenv("HOME")) {
-        search_paths.push_back(
-            std::string(home) +
-            "/.cache/torch/hub/snakers4_silero-vad_master/src/silero_vad/data/silero_vad.onnx"
-        );
-        // Also check for 16k optimized version
-        search_paths.push_back(
-            std::string(home) +
-            "/.cache/torch/hub/snakers4_silero-vad_master/src/silero_vad/data/silero_vad_16k_op15.onnx"
-        );
-    }
-
-    // 2. XDG data home
+    // 1. The user's own model (XDG data home)
     if (const char* data_home = std::getenv("XDG_DATA_HOME")) {
         search_paths.push_back(std::string(data_home) + "/nerd-dictation/silero_vad.onnx");
     } else if (const char* home = std::getenv("HOME")) {
         search_paths.push_back(std::string(home) + "/.local/share/nerd-dictation/silero_vad.onnx");
     }
 
+    // 2. The model installed with nerd-dictation (CMakeLists.txt: Silero VAD)
+#ifdef NERD_DICTATION_DATADIR
+    search_paths.push_back(NERD_DICTATION_DATADIR "/silero_vad.onnx");
+#endif
+
     // 3. System paths
     search_paths.push_back("/usr/share/nerd-dictation/silero_vad.onnx");
     search_paths.push_back("/usr/local/share/nerd-dictation/silero_vad.onnx");
+
+    // 4. Torch hub cache of the Python silero-vad package
+    if (const char* home = std::getenv("HOME")) {
+        search_paths.push_back(
+            std::string(home) +
+            "/.cache/torch/hub/snakers4_silero-vad_master/src/silero_vad/data/silero_vad.onnx"
+        );
+    }
 
     // Search for model
     for (const auto& path : search_paths) {

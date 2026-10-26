@@ -1,14 +1,14 @@
-[submodule "/home/marcusmae/forge/nerd-dictation/ThirdParty/toml11"]
-	path = /home/marcusmae/forge/nerd-dictation/ThirdParty/toml11
+[submodule "ThirdParty/toml11"]
+	path = ThirdParty/toml11
 	url = https://github.com/ToruNiina/toml11.git
-[submodule "/home/marcusmae/forge/nerd-dictation/ThirdParty/spdlog"]
-	path = /home/marcusmae/forge/nerd-dictation/ThirdParty/spdlog
+[submodule "ThirdParty/spdlog"]
+	path = ThirdParty/spdlog
 	url = https://github.com/gabime/spdlog.git
-[submodule "/home/marcusmae/forge/nerd-dictation/ThirdParty/CLI11"]
-	path = /home/marcusmae/forge/nerd-dictation/ThirdParty/CLI11
+[submodule "ThirdParty/CLI11"]
+	path = ThirdParty/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
-[submodule "/home/marcusmae/forge/nerd-dictation/ThirdParty/eigen"]
-	path = /home/marcusmae/forge/nerd-dictation/ThirdParty/eigen
+[submodule "ThirdParty/eigen"]
+	path = ThirdParty/eigen
 	url = https://gitlab.com/libeigen/eigen.git
 [submodule "ThirdParty/res_embed"]
 	path = ThirdParty/res_embed

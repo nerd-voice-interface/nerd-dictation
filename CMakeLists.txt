@@ -290,9 +290,32 @@ set(SOURCES
     ${SOURCE_DIR}/postprocess/text_postprocessor.cpp
 )
 
-# VAD Manager (requires ONNX Runtime)
+# VAD Manager (requires ONNX Runtime) and its model, Silero VAD (MIT licence,
+# https://github.com/snakers4/silero-vad), fetched from a pinned upstream
+# release and checked against its sha256; installed to share/nerd-dictation,
+# where find_vad_model() looks for it (NERD_DICTATION_DATADIR).
+set(SILERO_VAD_VERSION v6.2.3)
+set(SILERO_VAD_SHA256 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3)
+set(SILERO_VAD_LICENSE_SHA256 2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b)
 if(ONNXRUNTIME_FOUND)
     list(APPEND SOURCES ${SOURCE_DIR}/vad/vad_manager.cpp)
+
+    set(SILERO_VAD_URL https://raw.githubusercontent.com/snakers4/silero-vad/${SILERO_VAD_VERSION})
+    set(SILERO_VAD_MODEL ${CMAKE_BINARY_DIR}/silero-vad/silero_vad.onnx)
+    set(SILERO_VAD_LICENSE ${CMAKE_BINARY_DIR}/silero-vad/LICENSE)
+    file(DOWNLOAD ${SILERO_VAD_URL}/src/silero_vad/data/silero_vad.onnx ${SILERO_VAD_MODEL}
+        EXPECTED_HASH SHA256=${SILERO_VAD_SHA256} TLS_VERIFY ON)
+    file(DOWNLOAD ${SILERO_VAD_URL}/LICENSE ${SILERO_VAD_LICENSE}
+        EXPECTED_HASH SHA256=${SILERO_VAD_LICENSE_SHA256} TLS_VERIFY ON)
+    message(STATUS "Silero VAD ${SILERO_VAD_VERSION}: ${SILERO_VAD_MODEL}")
+
+    get_filename_component(NERD_DICTATION_DATADIR
+        "${CMAKE_INSTALL_PREFIX}/share/nerd-dictation" ABSOLUTE)
+    set_source_files_properties(${SOURCE_DIR}/vad/vad_manager.cpp PROPERTIES
+        COMPILE_DEFINITIONS "NERD_DICTATION_DATADIR=\"${NERD_DICTATION_DATADIR}\"")
+    install(FILES ${SILERO_VAD_MODEL} DESTINATION share/nerd-dictation)
+    install(FILES ${SILERO_VAD_LICENSE} DESTINATION share/licenses/nerd-dictation
+        RENAME silero-vad.LICENSE)
 endif()
 
 # Wake Word Manager (requires Vosk)
