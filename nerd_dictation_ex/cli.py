@@ -288,6 +288,26 @@ class DictationDaemon:
         self._wake_word_thread.start()
         print(f"Wake word detection запущен (слово: '{self._wake_word}')", file=sys.stderr)
 
+    @staticmethod
+    def _import_x_session_environment() -> None:
+        """Take DISPLAY and XAUTHORITY of the running X session.
+
+        The daemon starts before X, and each X login can bring a new display
+        and a new cookie file (Ly writes it to $XDG_RUNTIME_DIR/lyxauth, not
+        ~/.Xauthority). The session imports both into the user manager's
+        environment; read them from there before each connection attempt, so
+        the trigger and xdotool use the session that is actually running.
+        """
+        try:
+            out = subprocess.run(["systemctl", "--user", "show-environment"],
+                                 capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return
+        for line in out.splitlines():
+            name, _, value = line.partition("=")
+            if name in ("DISPLAY", "XAUTHORITY") and value:
+                os.environ[name] = value
+
     def _start_button_trigger(self) -> None:
         """Запустить поток кнопки-триггера, если она включена в конфиге."""
         if not self._trigger_button:
@@ -321,6 +341,7 @@ class DictationDaemon:
 
         while self._running:
             if not trigger.connected():
+                self._import_x_session_environment()
                 if trigger.connect():
                     print(f"[trigger] захват кнопки {self._trigger_button} установлен",
                           file=sys.stderr)
